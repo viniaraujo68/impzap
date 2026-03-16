@@ -164,6 +164,7 @@ type View struct {
 	LegalActions        []int    `json:"legal_actions"`
 	Reward              float64  `json:"reward"`
 	Winner              int      `json:"winner"`
+	PlayedCards         []string `json:"played_cards"`
 }
 
 var gameState *GameState
@@ -562,12 +563,33 @@ func (s *GameState) Marshal() string {
 	for len(tableCards) < 2 {
 		tableCards = append(tableCards, "")
 	}
+	playedCards := []string{}
+	rankNames := []string{"4", "5", "6", "7", "Q", "J", "K", "A", "2", "3"}
+	suitNames := []string{"CLUBS", "SPADES", "HEARTS", "DIAMONDS"}
+
+	for rIdx, round := range s.RoundHistory {
+		starter := s.RoundStarter[rIdx]
+
+		for cIdx, c := range round {
+			owner := starter
+			if cIdx == 1 {
+				owner = 1 - starter
+			}
+
+			if c.Facedown && owner != s.CurrentPlayer {
+				playedCards = append(playedCards, "FACEDOWN")
+			} else {
+				cardStr := rankNames[c.Rank] + "_" + suitNames[c.Suit]
+				playedCards = append(playedCards, cardStr)
+			}
+		}
+	}
 
 	view := View{
 		IsTerminal: s.IsTerminal, CurrentPlayer: s.CurrentPlayer, Score: s.Score,
 		Hand: serializedHand, Vira: s.Vira.String(), TableCards: tableCards,
 		CurrentBet: s.CurrentBet, WaitingForMaoDeOnze: s.WaitingForMaoDeOnze,
-		LegalActions: s.LegalActions, Reward: s.Reward, Winner: s.Winner,
+		LegalActions: s.LegalActions, Reward: s.Reward, Winner: s.Winner, PlayedCards: playedCards,
 	}
 	data, _ := json.Marshal(view)
 	return string(data)
