@@ -144,27 +144,27 @@ type GameState struct {
 	RoundHistory        [3][]Card
 	RoundStarter        [3]int
 	RoundWinners        [3]int
-	Reward              float64 `json:"reward"`
-	Winner              int     `json:"winner"`
-	LegalActions        []int   `json:"legal_actions"`
+	Reward              [2]float64 `json:"reward"`
+	Winner              int        `json:"winner"`
+	LegalActions        []int      `json:"legal_actions"`
 	HandJustEnded       bool
 	ResetRewardFlag     bool
 	HandStarter         int
 }
 
 type View struct {
-	IsTerminal          bool     `json:"is_terminal"`
-	CurrentPlayer       int      `json:"current_player"`
-	Score               [2]int   `json:"score"`
-	Hand                []string `json:"hand"`
-	Vira                string   `json:"vira"`
-	TableCards          []string `json:"table_cards"`
-	CurrentBet          int      `json:"current_bet_value"`
-	WaitingForMaoDeOnze bool     `json:"waiting_for_mao_de_onze"`
-	LegalActions        []int    `json:"legal_actions"`
-	Reward              float64  `json:"reward"`
-	Winner              int      `json:"winner"`
-	PlayedCards         []string `json:"played_cards"`
+	IsTerminal          bool       `json:"is_terminal"`
+	CurrentPlayer       int        `json:"current_player"`
+	Score               [2]int     `json:"score"`
+	Hand                []string   `json:"hand"`
+	Vira                string     `json:"vira"`
+	TableCards          []string   `json:"table_cards"`
+	CurrentBet          int        `json:"current_bet_value"`
+	WaitingForMaoDeOnze bool       `json:"waiting_for_mao_de_onze"`
+	LegalActions        []int      `json:"legal_actions"`
+	Reward              [2]float64 `json:"reward"`
+	Winner              int        `json:"winner"`
+	PlayedCards         []string   `json:"played_cards"`
 }
 
 var gameState *GameState
@@ -186,7 +186,7 @@ func createNewGame() *GameState {
 		TableCards: []Card{}, CurrentBet: 1, PendingBet: 0, WaitingForBet: false, WaitingForMaoDeOnze: false,
 		TrucoHolder: -1, OriginalTurn: -1, RoundWins: [2]int{0, 0}, CurrentRound: 0,
 		RoundHistory: [3][]Card{{}, {}, {}}, RoundStarter: [3]int{-1, -1, -1},
-		RoundWinners: [3]int{-1, -1, -1}, Reward: 0.0, Winner: -1,
+		RoundWinners: [3]int{-1, -1, -1}, Reward: [2]float64{0.0, 0.0}, Winner: -1,
 		LegalActions: []int{0, 1, 2, 3}, HandJustEnded: false, ResetRewardFlag: true,
 		HandStarter: 0,
 	}
@@ -202,7 +202,7 @@ func Step(actionID C.int) *C.char {
 	}
 
 	if gameState.ResetRewardFlag {
-		gameState.Reward = 0.0
+		gameState.Reward = [2]float64{0.0, 0.0}
 		gameState.ResetRewardFlag = false
 	}
 
@@ -211,7 +211,8 @@ func Step(actionID C.int) *C.char {
 		gameState.Score[winner] += gameState.CurrentBet
 		gameState.IsTerminal = true
 		gameState.Winner = winner
-		gameState.Reward = float64(gameState.CurrentBet) * float64(winner*2-1)
+		gameState.Reward[winner] = float64(gameState.CurrentBet)
+		gameState.Reward[1-winner] = -float64(gameState.CurrentBet)
 		return C.CString(gameState.Marshal())
 	}
 
@@ -305,11 +306,8 @@ func (s *GameState) fold() {
 		winner := 1 - s.CurrentPlayer
 		s.Score[winner] += 1
 
-		if winner == 0 {
-			s.Reward = 1.0
-		} else {
-			s.Reward = -1.0
-		}
+		s.Reward[winner] = 1.0
+		s.Reward[1-winner] = -1.0
 
 		s.WaitingForMaoDeOnze = false
 
@@ -330,11 +328,8 @@ func (s *GameState) fold() {
 	winner := 1 - s.CurrentPlayer
 	s.Score[winner] += s.CurrentBet
 
-	if winner == 0 {
-		s.Reward = float64(s.CurrentBet)
-	} else {
-		s.Reward = -float64(s.CurrentBet)
-	}
+	s.Reward[winner] = float64(s.CurrentBet)
+	s.Reward[1-winner] = -float64(s.CurrentBet)
 
 	s.WaitingForBet = false
 
@@ -425,18 +420,16 @@ func (s *GameState) determineHandWinner() int {
 func (s *GameState) applyHandScores() {
 	winner := s.determineHandWinner()
 	if winner == -1 {
-		s.Reward = 0.0
+		s.Reward = [2]float64{0.0, 0.0}
 		s.HandJustEnded = true
 		s.ResetRewardFlag = true
 		return
 	}
 
 	s.Score[winner] += s.CurrentBet
-	if winner == 0 {
-		s.Reward = float64(s.CurrentBet)
-	} else {
-		s.Reward = -float64(s.CurrentBet)
-	}
+
+	s.Reward[winner] = float64(s.CurrentBet)
+	s.Reward[1-winner] = -float64(s.CurrentBet)
 
 	s.HandJustEnded = true
 	s.ResetRewardFlag = true

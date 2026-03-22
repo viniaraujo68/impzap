@@ -49,7 +49,9 @@ class TrucoEnv(gym.Env):
             'current_player': self.current_state.get('current_player', -1),
             'waiting_for_mao_de_onze': self.current_state.get('waiting_for_mao_de_onze', False),
             'score_p0': self.current_state.get('score', [0, 0])[0],
-            'score_p1': self.current_state.get('score', [0, 0])[1]
+            'score_p1': self.current_state.get('score', [0, 0])[1],
+            'reward_p0': self.current_state.get('reward', [0.0, 0.0])[0], 
+            'reward_p1': self.current_state.get('reward', [0.0, 0.0])[1]
         }
 
     def reset(self, seed=None, options=None):
@@ -64,9 +66,10 @@ class TrucoEnv(gym.Env):
         ptr = self._lib.Step(int(action))
         self.current_state = self._parse_and_free(ptr)
         
-        reward = float(self.current_state.get('reward', 0.0))
+        info = self._get_info()
         terminated = bool(self.current_state.get('is_terminal', False))
-        
         truncated = False 
         
-        return self.current_state, reward, terminated, truncated, self._get_info()
+        reward = info['reward_p0'] 
+        
+        return self.current_state, reward, terminated, truncated, info
