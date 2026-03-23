@@ -1,36 +1,59 @@
 import time
+from typing import Any, Dict, Tuple
+
 from truco_env.env import TrucoEnv
+from truco_env.wrappers import TrucoVectorObservation
 from agents.heuristic_agent import HeuristicAgent
 from agents.random_agent import RandomAgent
+from agents.reinforce_agent import ReinforceAgent
+from agents.mcts_agent import MCTSAgent
 
-def translate_action(action, state):
-    is_mao_de_onze = state.get('waiting_for_mao_de_onze', False)
-    
+
+def translate_action(action: int, raw_state: Dict[str, Any]) -> str:
+    """Return a human-readable description of an action in the given state."""
+    is_mao_de_onze: bool = raw_state.get("waiting_for_mao_de_onze", False)
+
     if action == 3:
         return "RAISED"
     if action == 4:
-        return "AGREED TO PLAY (MÃO DE 11)" if is_mao_de_onze else "ACCEPTED RAISE"
+        return "ACCEPTED MAO DE ONZE" if is_mao_de_onze else "ACCEPTED RAISE"
     if action == 5:
-        return "REFUSED TO PLAY (MÃO DE 11)" if is_mao_de_onze else "FOLDED"
-    
+        return "REFUSED MAO DE ONZE" if is_mao_de_onze else "FOLDED"
+
+    hand: list = raw_state.get("hand", [])
     if 0 <= action <= 2:
-        hand = state.get('hand', [])
-        card_name = hand[action] if action < len(hand) else "?"
-        return f"PLAYED {card_name} (Open)"
-        
+        card = hand[action] if action < len(hand) else "?"
+        return f"PLAYED {card} (face-up)"
     if 6 <= action <= 8:
-        real_index = action - 6
-        hand = state.get('hand', [])
-        card_name = hand[real_index] if real_index < len(hand) else "?"
-        return f"PLAYED {card_name} FACEDOWN"
-        
+        idx = action - 6
+        card = hand[idx] if idx < len(hand) else "?"
+        return f"PLAYED {card} (face-down)"
+
     return f"UNKNOWN ACTION {action}"
 
-def get_agent_name(agent):
-    return getattr(agent, 'name', agent.__class__.__name__)
 
-def play_verbose_match(env, agent_p0, agent_p1):
-    state, info = env.reset()
+def get_agent_name(agent: Any) -> str:
+    return getattr(agent, "name", agent.__class__.__name__)
+
+
+def get_action_for_agent(
+    agent: Any,
+    state_vector: Any,
+    raw_state: Dict[str, Any],
+    info: Dict[str, Any],
+) -> int:
+    if isinstance(agent, ReinforceAgent):
+        return agent.act(state_vector, info)
+    return agent.act(raw_state, info)
+
+
+def play_verbose_match(
+    env: TrucoVectorObservation,
+    agent_p0: Any,
+    agent_p1: Any,
+) -> None:
+    """Play one game and print every action to stdout."""
+    state_vector, info = env.reset()
     terminated = False
     truncated = False
     turn = 1
@@ -39,100 +62,128 @@ def play_verbose_match(env, agent_p0, agent_p1):
     name_p0 = get_agent_name(agent_p0)
     name_p1 = get_agent_name(agent_p1)
 
-    print("="*60)
-    print(f"📺 WATCHING A SINGLE MATCH: {name_p0} (P0) vs {name_p1} (P1)")
-    print("="*60)
+    print("=" * 60)
+    print(f"MATCH: {name_p0} (P0) vs {name_p1} (P1)")
+    print("=" * 60)
 
     while not (terminated or truncated):
-        current_player = state['current_player']
-        
-        print(f"\n[Hand {hand_number} | Turn {turn}] Score: P0 [{state['score'][0]}] x [{state['score'][1]}] P1")
-        print(f"Vira: {state['vira']} | Current Bet: {state['current_bet_value']}")
-        print(f"Table: {state['table_cards']}")
-        print(f"Player {current_player}'s Hand: {state['hand']}")
-        
-        if info.get('waiting_for_mao_de_onze'):
-            print(f"MÃO DE 11! Player {current_player} is deciding whether to play or flee.")
-        
+        raw_state = env.raw_env.current_state
+        current_player: int = raw_state["current_player"]
+
+        print(
+            f"\n[Hand {hand_number} | Turn {turn}] "
+            f"Score: P0 [{raw_state['score'][0]}] x [{raw_state['score'][1]}] P1"
+        )
+        print(f"Vira: {raw_state['vira']} | Current Bet: {raw_state['current_bet_value']}")
+        print(f"Table: {raw_state['table_cards']}")
+        print(f"Player {current_player}'s Hand: {raw_state['hand']}")
+
+        if info.get("waiting_for_mao_de_onze"):
+            print(f"MAO DE ONZE: Player {current_player} must decide.")
+
         if current_player == 0:
-            action = agent_p0.act(state, info)
-            player_name = f"P0 ({name_p0})"
+            action = get_action_for_agent(agent_p0, state_vector, raw_state, info)
+            actor = f"P0 ({name_p0})"
         else:
-            action = agent_p1.act(state, info)
-            player_name = f"P1 ({name_p1})"
-            
-        print(f"{player_name}: {translate_action(action, state)}")
+            action = get_action_for_agent(agent_p1, state_vector, raw_state, info)
+            actor = f"P1 ({name_p1})"
 
-        next_state, reward, terminated, truncated, next_info = env.step(action)
+        print(f"  -> {actor}: {translate_action(action, raw_state)}")
 
-        if reward != 0:
+        next_state_vector, reward, terminated, truncated, next_info = env.step(action)
+
+        if next_info["reward_p0"] != 0:
+            next_raw = env.raw_env.current_state
             print("-" * 60)
-            print(f"⭐ HAND ENDED! Reward delivered: {reward:+.1f}")
-            print(f"⭐ NEW SCORE: P0 [{next_state['score'][0]}] x [{next_state['score'][1]}] P1")
+            print(
+                f"HAND ENDED. Score: P0 [{next_raw['score'][0]}] x [{next_raw['score'][1]}] P1"
+            )
             print("-" * 60)
             hand_number += 1
 
-        state = next_state
+        state_vector = next_state_vector
         info = next_info
         turn += 1
 
-    print("="*60)
-    print(f"🏆 MATCH ENDED! WINNER: PLAYER {state['winner']}")
-    print("="*60)
+    final = env.raw_env.current_state
+    print("=" * 60)
+    print(f"MATCH ENDED. WINNER: PLAYER {final['winner']}")
+    print("=" * 60)
 
 
-def simulate_tournament(env, agent_p0, agent_p1, num_games=1000):
+def simulate_tournament(
+    env: TrucoVectorObservation,
+    agent_p0: Any,
+    agent_p1: Any,
+    num_games: int = 1000,
+) -> Tuple[int, int]:
+    """
+    Run num_games silent matches and print a summary.
+
+    Returns
+    -------
+    Tuple[int, int]
+        (wins_p0, wins_p1)
+    """
     wins_p0 = 0
     wins_p1 = 0
-    
+
     name_p0 = get_agent_name(agent_p0)
     name_p1 = get_agent_name(agent_p1)
-    
-    print(f"\nSTARTING TOURNAMENT: {num_games} MATCHES")
-    print(f"P0: {name_p0} | P1: {name_p1}")
+
+    print(f"\nSTARTING TOURNAMENT: {num_games} games | {name_p0} (P0) vs {name_p1} (P1)")
     start_time = time.time()
 
-    for game in range(num_games):
-        state, info = env.reset()
+    for _ in range(num_games):
+        state_vector, info = env.reset()
         terminated = False
         truncated = False
-        
+
         while not (terminated or truncated):
-            current_player = state['current_player']
-            
+            raw_state = env.raw_env.current_state
+            current_player: int = raw_state["current_player"]
+
             if current_player == 0:
-                action = agent_p0.act(state, info)
+                action = get_action_for_agent(agent_p0, state_vector, raw_state, info)
             else:
-                action = agent_p1.act(state, info)
-                
-            state, reward, terminated, truncated, info = env.step(action)
-            
-        if state['winner'] == 0:
+                action = get_action_for_agent(agent_p1, state_vector, raw_state, info)
+
+            state_vector, _, terminated, truncated, info = env.step(action)
+
+        final = env.raw_env.current_state
+        if final["winner"] == 0:
             wins_p0 += 1
-        elif state['winner'] == 1:
+        elif final["winner"] == 1:
             wins_p1 += 1
 
-    end_time = time.time()
-    
-    win_rate_p0 = (wins_p0 / num_games) * 100
-    win_rate_p1 = (wins_p1 / num_games) * 100
-    
-    print("="*50)
-    print("🏆 TOURNAMENT FINAL RESULTS 🏆")
-    print("="*50)
-    print(f"Simulation Time: {end_time - start_time:.2f} seconds")
-    print(f"Wins P0 ({name_p0}): {wins_p0} ({win_rate_p0:.1f}%)")
-    print(f"Wins P1 ({name_p1}): {wins_p1} ({win_rate_p1:.1f}%)")
+    elapsed = time.time() - start_time
+    rate_p0 = wins_p0 / num_games * 100
+    rate_p1 = wins_p1 / num_games * 100
 
-def main():
-    env = TrucoEnv()
-    
-    agent_p0 = HeuristicAgent()
-    agent_p1 = RandomAgent() 
-    
-    play_verbose_match(env, agent_p0, agent_p1)
-    
-    simulate_tournament(env, agent_p0, agent_p1, num_games=1000)
+    print("=" * 50)
+    print("TOURNAMENT RESULTS")
+    print("=" * 50)
+    print(f"Time: {elapsed:.2f}s")
+    print(f"P0 ({name_p0}): {wins_p0} wins ({rate_p0:.1f}%)")
+    print(f"P1 ({name_p1}): {wins_p1} wins ({rate_p1:.1f}%)")
+
+    return wins_p0, wins_p1
+
+
+def main() -> None:
+    base_env = TrucoEnv()
+    env = TrucoVectorObservation(base_env)
+
+    agent_p0 = MCTSAgent(
+        env=base_env,
+        n_simulations=500,
+        n_determinizations=10,
+        perspective_player=0,
+    )
+    agent_p1 = HeuristicAgent()
+
+    simulate_tournament(env, agent_p0, agent_p1, num_games=100)
+
 
 if __name__ == "__main__":
     main()
