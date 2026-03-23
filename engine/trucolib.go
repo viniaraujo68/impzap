@@ -34,9 +34,9 @@ const (
 )
 
 type Card struct {
-	Rank     Rank
-	Suit     Suit
-	Facedown bool
+	Rank     Rank `json:"rank"`
+	Suit     Suit `json:"suit"`
+	Facedown bool `json:"facedown"`
 }
 
 type Deck []Card
@@ -127,29 +127,29 @@ func (d Deck) Shuffle() Deck {
 }
 
 type GameState struct {
-	IsTerminal          bool   `json:"is_terminal"`
-	CurrentPlayer       int    `json:"current_player"`
-	Score               [2]int `json:"score"`
-	Hands               [2][]Card
-	Vira                Card   `json:"vira"`
-	TableCards          []Card `json:"table_cards"`
-	CurrentBet          int    `json:"current_bet_value"`
-	PendingBet          int
-	WaitingForBet       bool
-	WaitingForMaoDeOnze bool `json:"waiting_for_mao_de_onze"`
-	TrucoHolder         int
-	OriginalTurn        int
-	RoundWins           [2]int
-	CurrentRound        int
-	RoundHistory        [3][]Card
-	RoundStarter        [3]int
-	RoundWinners        [3]int
+	IsTerminal          bool       `json:"is_terminal"`
+	CurrentPlayer       int        `json:"current_player"`
+	Score               [2]int     `json:"score"`
+	Hands               [2][]Card  `json:"hands"`
+	Vira                Card       `json:"vira"`
+	TableCards          []Card     `json:"table_cards"`
+	CurrentBet          int        `json:"current_bet_value"`
+	PendingBet          int        `json:"pending_bet"`
+	WaitingForBet       bool       `json:"waiting_for_bet"`
+	WaitingForMaoDeOnze bool       `json:"waiting_for_mao_de_onze"`
+	TrucoHolder         int        `json:"truco_holder"`
+	OriginalTurn        int        `json:"original_turn"`
+	RoundWins           [2]int     `json:"round_wins"`
+	CurrentRound        int        `json:"current_round"`
+	RoundHistory        [3][]Card  `json:"round_history"`
+	RoundStarter        [3]int     `json:"round_starter"`
+	RoundWinners        [3]int     `json:"round_winners"`
 	Reward              [2]float64 `json:"reward"`
 	Winner              int        `json:"winner"`
 	LegalActions        []int      `json:"legal_actions"`
-	HandJustEnded       bool
-	ResetRewardFlag     bool
-	HandStarter         int
+	HandJustEnded       bool       `json:"hand_just_ended"`
+	ResetRewardFlag     bool       `json:"reset_reward_flag"`
+	HandStarter         int        `json:"hand_starter"`
 }
 
 type View struct {
@@ -223,6 +223,36 @@ func Step(actionID C.int) *C.char {
 
 //export FreeString
 func FreeString(str *C.char) { C.free(unsafe.Pointer(str)) }
+
+//export StepFromState
+func StepFromState(stateJSON *C.char, actionID C.int) *C.char {
+	var s GameState
+	if err := json.Unmarshal([]byte(C.GoString(stateJSON)), &s); err != nil {
+		return C.CString(`{"error":"invalid state JSON"}`)
+	}
+
+	if s.ResetRewardFlag {
+		s.Reward = [2]float64{0.0, 0.0}
+		s.ResetRewardFlag = false
+	}
+
+	if !s.isActionLegal(int(actionID)) {
+		winner := 1 - s.CurrentPlayer
+		s.Score[winner] += s.CurrentBet
+		s.IsTerminal = true
+		s.Winner = winner
+		s.Reward[winner] = float64(s.CurrentBet)
+		s.Reward[1-winner] = -float64(s.CurrentBet)
+		data, _ := json.Marshal(&s)
+		return C.CString(string(data))
+	}
+
+	s.executeAction(int(actionID))
+	s.updateLegalActions()
+	data, _ := json.Marshal(&s)
+	return C.CString(string(data))
+}
+
 
 func (s *GameState) isActionLegal(action int) bool {
 	for _, legal := range s.LegalActions {
