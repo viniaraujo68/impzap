@@ -376,7 +376,12 @@ func (s *GameState) requestBet() {
 	ladder := []int{1, 3, 6, 9, 12}
 
 	if !s.WaitingForBet {
-		s.PendingBet = 3
+		for i, bet := range ladder {
+			if bet > s.CurrentBet && i < len(ladder) {
+				s.PendingBet = bet
+				break
+			}
+		}
 		s.WaitingForBet = true
 		s.TrucoHolder = s.CurrentPlayer
 		s.OriginalTurn = s.CurrentPlayer
@@ -386,7 +391,6 @@ func (s *GameState) requestBet() {
 
 	for i, bet := range ladder {
 		if bet == s.PendingBet && i < len(ladder)-1 {
-			s.CurrentBet = s.PendingBet
 			s.PendingBet = ladder[i+1]
 			s.TrucoHolder = s.CurrentPlayer
 			s.CurrentPlayer = 1 - s.CurrentPlayer
