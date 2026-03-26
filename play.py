@@ -174,15 +174,18 @@ def main() -> None:
     base_env = TrucoEnv()
     env = TrucoVectorObservation(base_env)
 
-    agent_p0 = MCTSAgent(
+    agent_p0 = ReinforceAgent()
+    agent_p0.load("models/reinforce_10000eps.pth")
+
+    agent_p1 = MCTSAgent(
         env=base_env,
         n_simulations=500,
         n_determinizations=10,
-        perspective_player=0,
+        perspective_player=1,
     )
-    agent_p1 = HeuristicAgent()
 
-    simulate_tournament(env, agent_p0, agent_p1, num_games=100)
+    # play_verbose_match(env, agent_p0, agent_p1)
+    simulate_tournament(env, agent_p0, agent_p1, num_games=1000)
 
 
 if __name__ == "__main__":

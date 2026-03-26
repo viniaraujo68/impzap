@@ -136,7 +136,7 @@ def plot_results(
 # Training loop
 # ---------------------------------------------------------------------------
 
-def train(num_episodes: int = 10_000) -> None:
+def train(num_episodes: int = 100_000) -> None:
     base_env = TrucoEnv()
     env = TrucoVectorObservation(base_env)
 
@@ -151,8 +151,9 @@ def train(num_episodes: int = 10_000) -> None:
     using_self_play: bool = False
     SELF_PLAY_MIX: float = 0.5  # fraction of self-play episodes once curriculum activates
 
-    # Rolling win-rate window (500 episodes)
-    WINDOW = 500
+    # Scale intervals with num_episodes: ~20 log points, window = 2x eval interval
+    EVAL_INTERVAL: int = max(500, num_episodes // 20)
+    WINDOW: int = EVAL_INTERVAL * 2
     win_window: Deque[int] = deque(maxlen=WINDOW)
 
     # Tracking for plots
@@ -216,7 +217,7 @@ def train(num_episodes: int = 10_000) -> None:
         return_window.append(episode_return)
 
         # Self-play curriculum: switch at 65% rolling win rate
-        if not using_self_play and len(win_window) == WINDOW:
+        if not using_self_play and len(win_window) >= EVAL_INTERVAL:
             rolling_wr = sum(win_window) / WINDOW * 100.0
             if rolling_wr >= 65.0:
                 using_self_play = True
@@ -227,18 +228,18 @@ def train(num_episodes: int = 10_000) -> None:
                     f"(rolling win rate: {rolling_wr:.1f}%)"
                 )
 
-        # Update frozen snapshot every 500 episodes once self-play is active
-        if using_self_play and (episode + 1) % 500 == 0:
+        # Update frozen snapshot every eval interval once self-play is active
+        if using_self_play and (episode + 1) % EVAL_INTERVAL == 0:
             frozen_snapshot = copy.deepcopy(agent_p0)
             frozen_snapshot.policy.eval()
 
-        # Periodic evaluation and logging every 500 episodes
-        if (episode + 1) % 500 == 0:
+        # Periodic evaluation and logging
+        if (episode + 1) % EVAL_INTERVAL == 0:
             rolling_wr = (sum(win_window) / len(win_window)) * 100.0 if win_window else 0.0
             avg_ret = float(np.mean(return_window)) if return_window else 0.0
 
-            eval_rand = run_evaluation(env, agent_p0, random_opp, 100)
-            eval_heur = run_evaluation(env, agent_p0, heuristic_opp, 100)
+            eval_rand = run_evaluation(env, agent_p0, random_opp, 300)
+            eval_heur = run_evaluation(env, agent_p0, heuristic_opp, 300)
 
             tracked_episodes.append(episode + 1)
             tracked_train_win_rates.append(rolling_wr)
@@ -276,4 +277,4 @@ def train(num_episodes: int = 10_000) -> None:
 
 
 if __name__ == "__main__":
-    train(num_episodes=10_000)
+    train(num_episodes=50_000)
