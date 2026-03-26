@@ -31,9 +31,9 @@ class ReinforceAgent:
     """
     Policy gradient (REINFORCE) agent for Truco Paulista.
 
-    Maintains a PolicyNetwork and accumulates log-probabilities and rewards
-    within each game. Policy update is triggered by the training loop after
-    each hand reward is received.
+    Collects the full game trajectory, then performs a single policy update
+    at game end using reward-to-go returns with a cross-episode EMA baseline.
+    Gradient norms are clipped to max_norm=1.0 to stabilise training.
     """
 
     def __init__(
@@ -42,14 +42,18 @@ class ReinforceAgent:
         hidden_size: int = 128,
         output_size: int = 9,
         lr: float = 1e-3,
+        gamma: float = 0.99,
+        ema_alpha: float = 0.05,
     ) -> None:
         self.name: str = "REINFORCE"
         self.policy: PolicyNetwork = PolicyNetwork(input_size, hidden_size, output_size)
         self.optimizer: torch.optim.Optimizer = torch.optim.Adam(
             self.policy.parameters(), lr=lr
         )
+        self.gamma: float = gamma
+        self.ema_alpha: float = ema_alpha
+        self._ema_baseline: float = 0.0
         self.saved_log_probs: List[torch.Tensor] = []
-        self.rewards: List[float] = []
 
     def act(self, state_vector: np.ndarray, info: Dict[str, Any]) -> int:
         """
@@ -84,29 +88,47 @@ class ReinforceAgent:
         self.saved_log_probs.append(m.log_prob(action))
         return action.item()
 
-    def store_reward(self, reward: float) -> None:
-        """Append a scalar reward to the episode buffer."""
-        self.rewards.append(reward)
+    def update_policy(self, returns: List[float]) -> None:
+        """
+        Perform one REINFORCE gradient step using the full-game trajectory.
 
-    def update_policy(self) -> None:
+        The EMA baseline is updated using the initial return G_0 (total game
+        return), then subtracted from each G_t to form advantages. No std
+        normalisation is applied to avoid distorting single-episode return
+        geometry. Clears saved_log_probs after the update.
+
+        Parameters
+        ----------
+        returns : List[float]
+            Reward-to-go returns G_t for each step where the agent acted,
+            pre-computed by the training loop with discount factor gamma.
         """
-        Perform one REINFORCE gradient step using the buffered log-probs and
-        rewards. Clears both buffers after the update.
-        """
-        if not self.saved_log_probs:
+        if not self.saved_log_probs or not returns:
+            self.saved_log_probs.clear()
             return
 
-        final_reward: float = sum(self.rewards)
+        assert len(self.saved_log_probs) == len(returns), (
+            f"log_probs length {len(self.saved_log_probs)} != returns length {len(returns)}"
+        )
+
+        # Update EMA baseline with G_0 (total discounted return for this game)
+        g0: float = returns[0]
+        self._ema_baseline = (
+            self.ema_alpha * g0 + (1.0 - self.ema_alpha) * self._ema_baseline
+        )
+
+        advantages = [g - self._ema_baseline for g in returns]
+
         policy_loss = torch.cat(
-            [-lp * final_reward for lp in self.saved_log_probs]
+            [-lp * adv for lp, adv in zip(self.saved_log_probs, advantages)]
         ).sum()
 
         self.optimizer.zero_grad()
         policy_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=1.0)
         self.optimizer.step()
 
         self.saved_log_probs.clear()
-        self.rewards.clear()
 
     def save(self, filepath: str) -> None:
         """Save the policy network weights to filepath."""
