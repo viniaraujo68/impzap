@@ -13,14 +13,21 @@
    - Frozen snapshot updated every 500 episodes
 
 ## Evaluation
-- Every 500 training episodes: 100 games vs `RandomAgent` + 100 games vs `HeuristicAgent`
-- MCTS agent is used only as a benchmark in `play.py`, not during training (too slow: ~2s/game vs ~0.07s)
+- Eval interval and window scale automatically with `num_episodes`: `EVAL_INTERVAL = max(500, num_episodes // 20)`, `WINDOW = EVAL_INTERVAL * 2`
+- Each eval checkpoint: 300 games vs `RandomAgent` + 300 games vs `HeuristicAgent`
+- MCTS agent is used only as a benchmark in `play.py`, not during training (too slow: ~0.4s/game vs ~0.005s)
 
 ## Hyperparameters
 - `lr = 1e-3`, `gamma = 0.99`, `ema_alpha = 0.05`
 - `hidden_size = 128`, `input_size = 164`, `output_size = 9`
 - Self-play mix: `SELF_PLAY_MIX = 0.5`
-- Curriculum window: `WINDOW = 500`
+- Default `num_episodes = 100_000` (call with any value; intervals scale automatically)
+
+## REINFORCE Performance Ceiling
+- 10k episodes: ~26% vs MCTS, ~84% vs Heuristic
+- 50k episodes: ~26% vs MCTS (no improvement) — confirmed plateau
+- Ceiling is architectural: static policy with no lookahead cannot close the gap against a search algorithm
+- Next step: CFR (see algorithms.md)
 
 ## Known Issues Fixed
 - Within-episode std normalization was dropped — normalizing a single episode's monotonically-discounted return sequence forces early steps of winning games into negative advantage

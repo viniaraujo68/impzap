@@ -19,7 +19,18 @@ Full-game trajectory collection with a single policy update at game end.
 - Implemented in `agents/reinforce_agent.py` and `train.py`.
 
 ## CFR (Counterfactual Regret Minimization)
-Not yet implemented. Planned: game-theoretic approach to approximate Nash Equilibrium by minimizing counterfactual regret.
+Not yet implemented. Next algorithm on the roadmap.
+
+**Why CFR over more REINFORCE training**: REINFORCE plateaued at ~26% win rate vs MCTS after 50k episodes (no improvement over 10k). The ceiling is architectural — a static policy with no lookahead cannot match a search algorithm. CFR is game-theoretically sound for imperfect information games and converges to a Nash Equilibrium strategy rather than optimizing against a fixed opponent.
+
+**Planned design**:
+- Algorithm: Chance Sampling CFR (external sampling variant) — handles large state space without full tree traversal
+- Information set key: `(player_hand, vira, table_cards, round_history, current_bet, score, round_wins)` — everything observable by the acting player
+- State abstraction: card suit abstraction (suits are symmetric in Truco except for the manilha rule), bucket current_bet into ladder levels
+- Storage: `regret_sum` and `strategy_sum` dicts keyed by `(info_set_key, action)`, persisted to disk as JSON or pickle
+- Interface: `CFRAgent` in `agents/cfr_agent.py` with `train(num_iterations)` and `act(state, info)` methods
+- Training: self-play only (CFR does not require an opponent — it converges by playing against itself)
+- Use `TrucoEnv.step_from_state()` for tree traversal — stateless, no global state mutation
 
 ## HMM (Hidden Markov Models)
 Not yet implemented. Planned: temporal modeling to track opponent betting behaviors and bluffing profiles.
