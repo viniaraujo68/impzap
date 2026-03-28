@@ -189,15 +189,17 @@ def main() -> None:
     )
 
     reinforce = ReinforceAgent()
-    reinforce.load("models/reinforce_50000eps.pth")
+    reinforce.load("models/reinforce.pth")
 
-    play_verbose_match(env, cfr, mcts)
-
-    # print("\n=== CFR Benchmark ===\n")
-    # simulate_tournament(env, cfr, random_agent, num_games=1000)
-    # simulate_tournament(env, cfr, heuristic, num_games=1000)
-    # simulate_tournament(env, cfr, mcts, num_games=1000)
-    # simulate_tournament(env, cfr, reinforce, num_games=1000)
+    print("\n=== Full Benchmark ===\n")
+    simulate_tournament(env, cfr, random_agent, num_games=1000)
+    simulate_tournament(env, cfr, heuristic, num_games=1000)
+    simulate_tournament(env, cfr, mcts, num_games=100)
+    simulate_tournament(env, cfr, reinforce, num_games=1000)
+    simulate_tournament(env, heuristic, mcts, num_games=100)
+    simulate_tournament(env, reinforce, mcts, num_games=100)
+    simulate_tournament(env, reinforce, heuristic, num_games=1000)
+    simulate_tournament(env, reinforce, random_agent, num_games=1000)
 
 
 if __name__ == "__main__":

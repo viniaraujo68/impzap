@@ -53,6 +53,78 @@ def _strength_bucket(strength: int) -> int:
     return 2
 
 
+def _build_action_maps(
+    legal_actions: List[int],
+    hand_strengths: List[int],
+) -> tuple:
+    """
+    Build bidirectional maps between real actions and abstract rank-ordered
+    actions. Play actions (0-2 face-up, 6-8 face-down) are remapped so that
+    abstract action 0 = play weakest, 1 = play middle, 2 = play strongest.
+    Non-play actions (3=raise, 4=accept, 5=fold) keep their identity.
+
+    Parameters
+    ----------
+    legal_actions : List[int]
+        Legal actions from the engine (real action IDs).
+    hand_strengths : List[int]
+        Card strength for each hand index (hand[0], hand[1], hand[2]).
+
+    Returns
+    -------
+    (real_to_abstract, abstract_to_real, abstract_actions)
+        real_to_abstract: dict mapping real action -> abstract action
+        abstract_to_real: dict mapping abstract action -> real action
+        abstract_actions: list of abstract actions (same length as legal_actions)
+    """
+    # Rank hand indices by strength: rank 0 = weakest, rank N = strongest.
+    indexed = list(enumerate(hand_strengths))
+    indexed.sort(key=lambda x: x[1])
+    # index_to_rank[hand_idx] = strength rank (0=weakest)
+    index_to_rank = {}
+    for rank, (idx, _) in enumerate(indexed):
+        index_to_rank[idx] = rank
+
+    real_to_abstract: Dict[int, int] = {}
+    abstract_to_real: Dict[int, int] = {}
+
+    for a in legal_actions:
+        if 0 <= a <= 2:
+            abstract_a = index_to_rank.get(a, a)
+            real_to_abstract[a] = abstract_a
+            abstract_to_real[abstract_a] = a
+        elif 6 <= a <= 8:
+            hand_idx = a - 6
+            abstract_a = 6 + index_to_rank.get(hand_idx, hand_idx)
+            real_to_abstract[a] = abstract_a
+            abstract_to_real[abstract_a] = a
+        else:
+            # Non-play actions stay the same.
+            real_to_abstract[a] = a
+            abstract_to_real[a] = a
+
+    abstract_actions = [real_to_abstract[a] for a in legal_actions]
+    return real_to_abstract, abstract_to_real, abstract_actions
+
+
+def _get_hand_strengths_full(
+    state: Dict[str, Any], player: int
+) -> List[int]:
+    """Get card strengths for each hand index from the full GameState."""
+    vira_str = go_to_card(state["vira"])
+    return [
+        card_strength(_go_card_to_str(c, observer_owns=True), vira_str)
+        for c in state["hands"][player]
+    ]
+
+
+def _get_hand_strengths_view(state: Dict[str, Any]) -> List[int]:
+    """Get card strengths for each hand index from the View state."""
+    vira = state.get("vira", "")
+    hand = state.get("hand", [])
+    return [card_strength(c, vira) for c in hand]
+
+
 class CFRAgent:
     """
     External Sampling CFR agent for Truco Paulista.
@@ -236,37 +308,44 @@ class CFRAgent:
         if not legal_actions:
             return 0.0
 
+        # Build abstract action mapping (rank-ordered play actions).
+        hand_strengths = _get_hand_strengths_full(state, current_player)
+        r2a, a2r, abstract_actions = _build_action_maps(
+            legal_actions, hand_strengths
+        )
+
         info_key = self._info_set_key(state, current_player)
-        strategy = self._get_strategy(info_key, legal_actions)
+        strategy = self._get_strategy(info_key, abstract_actions)
 
         if current_player == traversing_player:
             # Traverse all actions for the traversing player.
             action_values: Dict[int, float] = {}
-            for action in legal_actions:
-                next_state = self._env.step_from_state(state, action)
+            for abs_a in abstract_actions:
+                real_a = a2r[abs_a]
+                next_state = self._env.step_from_state(state, real_a)
                 if current_player == 0:
-                    action_values[action] = self._cfr(
+                    action_values[abs_a] = self._cfr(
                         next_state, traversing_player,
-                        reach_p0 * strategy[action], reach_p1,
+                        reach_p0 * strategy[abs_a], reach_p1,
                     )
                 else:
-                    action_values[action] = self._cfr(
+                    action_values[abs_a] = self._cfr(
                         next_state, traversing_player,
-                        reach_p0, reach_p1 * strategy[action],
+                        reach_p0, reach_p1 * strategy[abs_a],
                     )
 
             node_value = sum(
-                strategy[a] * action_values[a] for a in legal_actions
+                strategy[a] * action_values[a] for a in abstract_actions
             )
 
             # Update regrets weighted by opponent reach probability.
             opponent_reach = reach_p1 if current_player == 0 else reach_p0
             if info_key not in self.regret_sum:
                 self.regret_sum[info_key] = {}
-            for action in legal_actions:
-                regret = opponent_reach * (action_values[action] - node_value)
-                self.regret_sum[info_key][action] = (
-                    self.regret_sum[info_key].get(action, 0.0) + regret
+            for abs_a in abstract_actions:
+                regret = opponent_reach * (action_values[abs_a] - node_value)
+                self.regret_sum[info_key][abs_a] = (
+                    self.regret_sum[info_key].get(abs_a, 0.0) + regret
                 )
 
             return node_value
@@ -276,25 +355,26 @@ class CFRAgent:
             my_reach = reach_p0 if current_player == 0 else reach_p1
             if info_key not in self.strategy_sum:
                 self.strategy_sum[info_key] = {}
-            for a in legal_actions:
+            for a in abstract_actions:
                 self.strategy_sum[info_key][a] = (
                     self.strategy_sum[info_key].get(a, 0.0)
                     + my_reach * strategy[a]
                 )
 
-            action = random.choices(
-                legal_actions,
-                weights=[strategy[a] for a in legal_actions],
+            abs_action = random.choices(
+                abstract_actions,
+                weights=[strategy[a] for a in abstract_actions],
             )[0]
-            next_state = self._env.step_from_state(state, action)
+            real_action = a2r[abs_action]
+            next_state = self._env.step_from_state(state, real_action)
             if current_player == 0:
                 return self._cfr(
                     next_state, traversing_player,
-                    reach_p0 * strategy[action], reach_p1,
+                    reach_p0 * strategy[abs_action], reach_p1,
                 )
             return self._cfr(
                 next_state, traversing_player,
-                reach_p0, reach_p1 * strategy[action],
+                reach_p0, reach_p1 * strategy[abs_action],
             )
 
     # ------------------------------------------------------------------
@@ -360,13 +440,19 @@ class CFRAgent:
         if len(legal_actions) == 1:
             return legal_actions[0]
 
-        info_key = self._info_set_key_from_view(state, info)
-        strategy = self._get_average_strategy(info_key, legal_actions)
+        hand_strengths = _get_hand_strengths_view(state)
+        _, a2r, abstract_actions = _build_action_maps(
+            legal_actions, hand_strengths
+        )
 
-        return random.choices(
-            legal_actions,
-            weights=[strategy[a] for a in legal_actions],
+        info_key = self._info_set_key_from_view(state, info)
+        strategy = self._get_average_strategy(info_key, abstract_actions)
+
+        abs_action = random.choices(
+            abstract_actions,
+            weights=[strategy[a] for a in abstract_actions],
         )[0]
+        return a2r[abs_action]
 
     # ------------------------------------------------------------------
     # Persistence

@@ -1,3 +1,13 @@
+"""
+REINFORCE training script for Truco Paulista.
+
+Usage:
+    python train.py                    # 50k episodes (default)
+    python train.py --episodes 100000
+    python train.py --output models/my_model.pth
+"""
+
+import argparse
 import copy
 import os
 import random
@@ -14,6 +24,9 @@ from agents.random_agent import RandomAgent
 from agents.reinforce_agent import ReinforceAgent
 from truco_env.env import TrucoEnv
 from truco_env.wrappers import TrucoVectorObservation
+
+DEFAULT_EPISODES: int = 50_000
+DEFAULT_MODEL_PATH: str = "models/reinforce.pth"
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +149,7 @@ def plot_results(
 # Training loop
 # ---------------------------------------------------------------------------
 
-def train(num_episodes: int = 100_000) -> None:
+def train(num_episodes: int = DEFAULT_EPISODES, output: str = DEFAULT_MODEL_PATH) -> None:
     base_env = TrucoEnv()
     env = TrucoVectorObservation(base_env)
 
@@ -262,10 +275,9 @@ def train(num_episodes: int = 100_000) -> None:
     print(f"Total time: {end_time - start_time:.2f}s")
     print("=" * 60)
 
-    os.makedirs("models", exist_ok=True)
-    model_name = f"models/reinforce_{num_episodes}eps.pth"
-    agent_p0.save(model_name)
-    print(f"Model saved to: {model_name}")
+    os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
+    agent_p0.save(output)
+    print(f"Model saved to: {output}")
 
     plot_results(
         tracked_episodes,
@@ -277,4 +289,14 @@ def train(num_episodes: int = 100_000) -> None:
 
 
 if __name__ == "__main__":
-    train(num_episodes=50_000)
+    parser = argparse.ArgumentParser(description="Train REINFORCE agent for Truco Paulista")
+    parser.add_argument(
+        "--episodes", type=int, default=DEFAULT_EPISODES,
+        help=f"Number of training episodes (default: {DEFAULT_EPISODES})",
+    )
+    parser.add_argument(
+        "--output", type=str, default=DEFAULT_MODEL_PATH,
+        help=f"Output model path (default: {DEFAULT_MODEL_PATH})",
+    )
+    args = parser.parse_args()
+    train(num_episodes=args.episodes, output=args.output)
