@@ -7,6 +7,7 @@ from agents.heuristic_agent import HeuristicAgent
 from agents.random_agent import RandomAgent
 from agents.reinforce_agent import ReinforceAgent
 from agents.mcts_agent import MCTSAgent
+from agents.cfr_agent import CFRAgent
 
 
 def translate_action(action: int, raw_state: Dict[str, Any]) -> str:
@@ -174,18 +175,29 @@ def main() -> None:
     base_env = TrucoEnv()
     env = TrucoVectorObservation(base_env)
 
-    agent_p0 = ReinforceAgent()
-    agent_p0.load("models/reinforce_10000eps.pth")
+    cfr = CFRAgent()
+    cfr.load("models/cfr.pkl")
 
-    agent_p1 = MCTSAgent(
+    random_agent = RandomAgent()
+    heuristic = HeuristicAgent()
+
+    mcts = MCTSAgent(
         env=base_env,
         n_simulations=500,
         n_determinizations=10,
         perspective_player=1,
     )
 
-    # play_verbose_match(env, agent_p0, agent_p1)
-    simulate_tournament(env, agent_p0, agent_p1, num_games=1000)
+    reinforce = ReinforceAgent()
+    reinforce.load("models/reinforce_50000eps.pth")
+
+    play_verbose_match(env, cfr, mcts)
+
+    # print("\n=== CFR Benchmark ===\n")
+    # simulate_tournament(env, cfr, random_agent, num_games=1000)
+    # simulate_tournament(env, cfr, heuristic, num_games=1000)
+    # simulate_tournament(env, cfr, mcts, num_games=1000)
+    # simulate_tournament(env, cfr, reinforce, num_games=1000)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,396 @@
+"""
+Counterfactual Regret Minimization (CFR) agent for Truco Paulista (1v1).
+
+Algorithm: External Sampling CFR (Chance Sampling variant).
+- Traversing player's turns: iterate over all legal actions, recurse, accumulate regrets.
+- Opponent's turns: sample one action from the current strategy, recurse.
+- Chance nodes (card deals): handled by sampling a fresh game per iteration.
+
+Converges to a Nash Equilibrium strategy through self-play.
+Uses TrucoEnv.step_from_state() for all state transitions (stateless, no global mutation).
+"""
+
+from __future__ import annotations
+
+import pickle
+import random
+import sys
+import time
+from typing import Any, Dict, List, Optional
+
+from agents.card_utils import RANKS, SUITS, card_strength, go_to_card
+from truco_env.env import TrucoEnv
+
+# Ensure recursion limit is high enough for deep game trees.
+sys.setrecursionlimit(10_000)
+
+_BET_LADDER: List[int] = [1, 3, 6, 9, 12]
+
+
+def _go_card_to_str(card: Dict[str, Any], observer_owns: bool) -> str:
+    """
+    Convert a Go card dict to a canonical string from the observer's POV.
+    If the card is facedown and the observer does NOT own it, return "FACEDOWN".
+    If the card is facedown but the observer owns it, show the actual card.
+    """
+    if card.get("facedown", False) and not observer_owns:
+        return "FACEDOWN"
+    return f"{RANKS[card['rank']]}_{SUITS[card['suit']]}"
+
+
+def _strength_bucket(strength: int) -> int:
+    """
+    Bucket card strength into 4 categories to reduce info set space.
+    -1 = facedown/unknown, 0 = weak (4-K, strength 0-6),
+    1 = strong (A-3, strength 7-9), 2 = manilha (strength 10+).
+    """
+    if strength < 0:
+        return -1
+    if strength <= 6:
+        return 0
+    if strength <= 9:
+        return 1
+    return 2
+
+
+class CFRAgent:
+    """
+    External Sampling CFR agent for Truco Paulista.
+
+    Maintains cumulative regret and cumulative strategy tables keyed by
+    information set strings. At play time, uses the average strategy
+    (converged Nash Equilibrium approximation).
+    """
+
+    name: str = "CFR"
+
+    def __init__(self, env: Optional[TrucoEnv] = None) -> None:
+        self._env: Optional[TrucoEnv] = env
+        self.regret_sum: Dict[str, Dict[int, float]] = {}
+        self.strategy_sum: Dict[str, Dict[int, float]] = {}
+        self._iterations: int = 0
+
+    # ------------------------------------------------------------------
+    # Strategy computation
+    # ------------------------------------------------------------------
+
+    def _get_strategy(
+        self, info_key: str, legal_actions: List[int]
+    ) -> Dict[int, float]:
+        """Current strategy via regret matching."""
+        regrets = self.regret_sum.get(info_key, {})
+        positive = {a: max(regrets.get(a, 0.0), 0.0) for a in legal_actions}
+        total = sum(positive.values())
+        if total > 0:
+            return {a: positive[a] / total for a in legal_actions}
+        return {a: 1.0 / len(legal_actions) for a in legal_actions}
+
+    def _get_average_strategy(
+        self, info_key: str, legal_actions: List[int]
+    ) -> Dict[int, float]:
+        """Average strategy (converged output)."""
+        sums = self.strategy_sum.get(info_key, {})
+        total = sum(sums.get(a, 0.0) for a in legal_actions)
+        if total > 0:
+            return {a: sums.get(a, 0.0) / total for a in legal_actions}
+        return {a: 1.0 / len(legal_actions) for a in legal_actions}
+
+    # ------------------------------------------------------------------
+    # Information set key (full GameState — training)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _info_set_key(state: Dict[str, Any], player: int) -> str:
+        """
+        Build an information set key from the full GameState for the given
+        player. Uses bucketed card strength abstraction to keep the info set
+        space tractable. Produces the same key format as _info_set_key_from_view.
+        """
+        vira_str = go_to_card(state["vira"])
+
+        # Player's hand as sorted bucketed strength values.
+        hand_buckets = sorted(
+            _strength_bucket(card_strength(
+                _go_card_to_str(c, observer_owns=True), vira_str
+            ))
+            for c in state["hands"][player]
+        )
+
+        # Table cards as bucketed strength tuple.
+        table_buckets = tuple(
+            _strength_bucket(card_strength(go_to_card(c), vira_str))
+            for c in state.get("table_cards", [])
+        )
+
+        # Played cards from round_history, bucketed.
+        round_starters = state.get("round_starter", [-1, -1, -1])
+        round_history_raw = state.get("round_history", [[], [], []])
+        played_buckets: List[int] = []
+        for r_idx, rnd in enumerate(round_history_raw):
+            starter = round_starters[r_idx]
+            for c_idx, card in enumerate(rnd):
+                owner = starter if c_idx == 0 else 1 - starter
+                card_str = _go_card_to_str(
+                    card, observer_owns=(owner == player)
+                )
+                played_buckets.append(
+                    _strength_bucket(card_strength(card_str, vira_str))
+                )
+
+        current_bet = state.get("current_bet_value", 1)
+        pending_bet = state.get("pending_bet", 0)
+        current_round = state.get("current_round", 0)
+
+        info_tuple = (
+            tuple(hand_buckets),
+            table_buckets,
+            tuple(played_buckets),
+            current_bet,
+            pending_bet,
+            current_round,
+        )
+        return str(info_tuple)
+
+    # ------------------------------------------------------------------
+    # Information set key (View state — play time)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _info_set_key_from_view(
+        state: Dict[str, Any], info: Dict[str, Any]
+    ) -> str:
+        """
+        Build an info set key from a View state (play time).
+        Uses the same bucketed card strength abstraction as _info_set_key.
+        """
+        vira = state.get("vira", "")
+        hand = state.get("hand", [])
+        hand_buckets = sorted(
+            _strength_bucket(card_strength(c, vira)) for c in hand if c
+        )
+
+        # Filter empty strings: the View pads table_cards to 2 entries.
+        table_cards_raw = [c for c in state.get("table_cards", []) if c]
+        table_buckets = tuple(
+            _strength_bucket(card_strength(c, vira)) for c in table_cards_raw
+        )
+
+        played_cards = state.get("played_cards", [])
+        played_buckets = tuple(
+            _strength_bucket(card_strength(c, vira)) for c in played_cards
+        )
+
+        current_bet = state.get("current_bet_value", 1)
+
+        # Infer pending_bet from legal actions and bet state.
+        pending_bet = 0
+        waiting_mao = state.get("waiting_for_mao_de_onze", False)
+        legal_actions = info.get("legal_actions", [])
+        waiting_for_bet = (
+            (4 in legal_actions or 5 in legal_actions) and not waiting_mao
+        )
+        if waiting_for_bet:
+            for i, val in enumerate(_BET_LADDER):
+                if val == current_bet and i < len(_BET_LADDER) - 1:
+                    pending_bet = _BET_LADDER[i + 1]
+                    break
+
+        current_round = len(played_cards) // 2
+
+        info_tuple = (
+            tuple(hand_buckets),
+            table_buckets,
+            played_buckets,
+            current_bet,
+            pending_bet,
+            current_round,
+        )
+        return str(info_tuple)
+
+    # ------------------------------------------------------------------
+    # CFR tree traversal
+    # ------------------------------------------------------------------
+
+    def _cfr(
+        self,
+        state: Dict[str, Any],
+        traversing_player: int,
+        reach_p0: float,
+        reach_p1: float,
+    ) -> float:
+        """
+        External sampling CFR traversal over a single hand.
+        Returns utility for the traversing player.
+        Stops when a hand resolves (non-zero reward) or game terminates.
+        """
+        reward = state.get("reward", [0.0, 0.0])
+        has_reward = reward[0] != 0.0 or reward[1] != 0.0
+        is_terminal = state.get("is_terminal", False)
+
+        if is_terminal or has_reward:
+            return float(reward[traversing_player])
+
+        current_player: int = state["current_player"]
+        legal_actions: List[int] = state["legal_actions"]
+
+        if not legal_actions:
+            return 0.0
+
+        info_key = self._info_set_key(state, current_player)
+        strategy = self._get_strategy(info_key, legal_actions)
+
+        if current_player == traversing_player:
+            # Traverse all actions for the traversing player.
+            action_values: Dict[int, float] = {}
+            for action in legal_actions:
+                next_state = self._env.step_from_state(state, action)
+                if current_player == 0:
+                    action_values[action] = self._cfr(
+                        next_state, traversing_player,
+                        reach_p0 * strategy[action], reach_p1,
+                    )
+                else:
+                    action_values[action] = self._cfr(
+                        next_state, traversing_player,
+                        reach_p0, reach_p1 * strategy[action],
+                    )
+
+            node_value = sum(
+                strategy[a] * action_values[a] for a in legal_actions
+            )
+
+            # Update regrets weighted by opponent reach probability.
+            opponent_reach = reach_p1 if current_player == 0 else reach_p0
+            if info_key not in self.regret_sum:
+                self.regret_sum[info_key] = {}
+            for action in legal_actions:
+                regret = opponent_reach * (action_values[action] - node_value)
+                self.regret_sum[info_key][action] = (
+                    self.regret_sum[info_key].get(action, 0.0) + regret
+                )
+
+            return node_value
+
+        else:
+            # Opponent node: sample one action, update strategy sum.
+            my_reach = reach_p0 if current_player == 0 else reach_p1
+            if info_key not in self.strategy_sum:
+                self.strategy_sum[info_key] = {}
+            for a in legal_actions:
+                self.strategy_sum[info_key][a] = (
+                    self.strategy_sum[info_key].get(a, 0.0)
+                    + my_reach * strategy[a]
+                )
+
+            action = random.choices(
+                legal_actions,
+                weights=[strategy[a] for a in legal_actions],
+            )[0]
+            next_state = self._env.step_from_state(state, action)
+            if current_player == 0:
+                return self._cfr(
+                    next_state, traversing_player,
+                    reach_p0 * strategy[action], reach_p1,
+                )
+            return self._cfr(
+                next_state, traversing_player,
+                reach_p0, reach_p1 * strategy[action],
+            )
+
+    # ------------------------------------------------------------------
+    # Training
+    # ------------------------------------------------------------------
+
+    def train(self, num_iterations: int = 10_000) -> None:
+        """
+        Run CFR training for num_iterations. Each iteration traverses twice:
+        once as player 0 and once as player 1.
+        """
+        if self._env is None:
+            raise RuntimeError("CFRAgent requires a TrucoEnv for training.")
+
+        log_interval = max(1, num_iterations // 20)
+        start_time = time.time()
+
+        for i in range(1, num_iterations + 1):
+            # Sample a fresh game (chance node) — one hand traversal.
+            state = self._env.init_game_full()
+
+            # Traverse as player 0, then as player 1.
+            self._cfr(state, 0, 1.0, 1.0)
+            self._cfr(state, 1, 1.0, 1.0)
+
+            self._iterations += 1
+
+            if i % log_interval == 0:
+                elapsed = time.time() - start_time
+                info_sets = len(self.regret_sum)
+                print(
+                    f"[CFR] Iteration {i}/{num_iterations} "
+                    f"({elapsed:.1f}s) | Info sets: {info_sets}"
+                )
+
+        elapsed = time.time() - start_time
+        print(
+            f"[CFR] Training complete. {num_iterations} iterations in "
+            f"{elapsed:.1f}s. Info sets: {len(self.regret_sum)}"
+        )
+
+    # ------------------------------------------------------------------
+    # Play interface
+    # ------------------------------------------------------------------
+
+    def act(self, state: Dict[str, Any], info: Dict[str, Any]) -> int:
+        """
+        Select an action using the converged average strategy.
+
+        Parameters
+        ----------
+        state : Dict[str, Any]
+            Observable state dict from TrucoEnv (View format).
+        info : Dict[str, Any]
+            Info dict with 'legal_actions'.
+
+        Returns
+        -------
+        int
+            A legal action.
+        """
+        legal_actions: List[int] = info["legal_actions"]
+        if len(legal_actions) == 1:
+            return legal_actions[0]
+
+        info_key = self._info_set_key_from_view(state, info)
+        strategy = self._get_average_strategy(info_key, legal_actions)
+
+        return random.choices(
+            legal_actions,
+            weights=[strategy[a] for a in legal_actions],
+        )[0]
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def save(self, filepath: str) -> None:
+        """Save regret and strategy tables to a pickle file."""
+        data = {
+            "regret_sum": self.regret_sum,
+            "strategy_sum": self.strategy_sum,
+            "iterations": self._iterations,
+        }
+        with open(filepath, "wb") as f:
+            pickle.dump(data, f)
+        print(f"[CFR] Saved to {filepath} ({len(self.regret_sum)} info sets)")
+
+    def load(self, filepath: str) -> None:
+        """Load regret and strategy tables from a pickle file."""
+        with open(filepath, "rb") as f:
+            data = pickle.load(f)
+        self.regret_sum = data["regret_sum"]
+        self.strategy_sum = data["strategy_sum"]
+        self._iterations = data.get("iterations", 0)
+        print(
+            f"[CFR] Loaded from {filepath} "
+            f"({len(self.regret_sum)} info sets, {self._iterations} iterations)"
+        )

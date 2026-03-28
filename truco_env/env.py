@@ -45,6 +45,7 @@ class TrucoEnv(gym.Env):
         self._lib.StepFromState.restype = ctypes.c_void_p
         self._lib.RolloutFromState.argtypes = [ctypes.c_char_p, ctypes.c_int]
         self._lib.RolloutFromState.restype = ctypes.c_void_p
+        self._lib.InitGameFull.restype = ctypes.c_void_p
         self._lib.FreeString.argtypes = [ctypes.c_void_p]
 
         self.action_space: spaces.Discrete = spaces.Discrete(9)
@@ -75,6 +76,16 @@ class TrucoEnv(gym.Env):
             "reward_p0": self.current_state.get("reward", [0.0, 0.0])[0],
             "reward_p1": self.current_state.get("reward", [0.0, 0.0])[1],
         }
+
+    def init_game_full(self) -> Dict[str, Any]:
+        """
+        Create a new game and return the full GameState dict (both hands
+        visible). Used by CFR training for tree traversal.
+        """
+        ptr = self._lib.InitGameFull()
+        full_state = self._parse_and_free(ptr)
+        self.current_state = full_state
+        return full_state
 
     def reset(
         self,
