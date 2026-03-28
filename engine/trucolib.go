@@ -253,7 +253,6 @@ func StepFromState(stateJSON *C.char, actionID C.int) *C.char {
 	return C.CString(string(data))
 }
 
-
 func (s *GameState) isActionLegal(action int) bool {
 	for _, legal := range s.LegalActions {
 		if legal == action {
@@ -355,11 +354,20 @@ func (s *GameState) fold() {
 		return
 	}
 
-	winner := 1 - s.CurrentPlayer
-	s.Score[winner] += s.CurrentBet
+	ladder := []int{1, 3, 6, 9, 12}
+	foldValue := s.CurrentBet
+	for i, bet := range ladder {
+		if bet == s.PendingBet && i > 0 {
+			foldValue = ladder[i-1]
+			break
+		}
+	}
 
-	s.Reward[winner] = float64(s.CurrentBet)
-	s.Reward[1-winner] = -float64(s.CurrentBet)
+	winner := 1 - s.CurrentPlayer
+	s.Score[winner] += foldValue
+
+	s.Reward[winner] = float64(foldValue)
+	s.Reward[1-winner] = -float64(foldValue)
 
 	s.WaitingForBet = false
 
