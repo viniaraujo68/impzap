@@ -40,17 +40,40 @@ def _go_card_to_str(card: Dict[str, Any], observer_owns: bool) -> str:
 
 def _strength_bucket(strength: int) -> int:
     """
-    Bucket card strength into 4 categories to reduce info set space.
-    -1 = facedown/unknown, 0 = weak (4-K, strength 0-6),
-    1 = strong (A-3, strength 7-9), 2 = manilha (strength 10+).
+    Bucket card strength into 5 categories to reduce info set space while
+    preserving meaningful distinctions.
+    -1 = facedown/unknown,
+     0 = trash (4-7, strength 0-3),
+     1 = low (Q-K, strength 4-6),
+     2 = mid (A-2, strength 7-8),
+     3 = high (3, strength 9),
+     4 = manilha (strength 10+).
     """
     if strength < 0:
         return -1
-    if strength <= 6:
+    if strength <= 3:
         return 0
-    if strength <= 9:
+    if strength <= 6:
         return 1
-    return 2
+    if strength <= 8:
+        return 2
+    if strength == 9:
+        return 3
+    return 4
+
+
+def _score_bucket(score: int) -> int:
+    """
+    Bucket a player's score for info set key.
+    0 = low (0-4), 1 = mid (5-8), 2 = high (9-10), 3 = mao (11).
+    """
+    if score <= 4:
+        return 0
+    if score <= 8:
+        return 1
+    if score <= 10:
+        return 2
+    return 3
 
 
 def _build_action_maps(
@@ -213,6 +236,10 @@ class CFRAgent:
         pending_bet = state.get("pending_bet", 0)
         current_round = state.get("current_round", 0)
 
+        score = state.get("score", [0, 0])
+        my_score_bucket = _score_bucket(score[player])
+        opp_score_bucket = _score_bucket(score[1 - player])
+
         info_tuple = (
             tuple(hand_buckets),
             table_buckets,
@@ -220,6 +247,8 @@ class CFRAgent:
             current_bet,
             pending_bet,
             current_round,
+            my_score_bucket,
+            opp_score_bucket,
         )
         return str(info_tuple)
 
@@ -269,6 +298,11 @@ class CFRAgent:
 
         current_round = len(played_cards) // 2
 
+        score = state.get("score", [0, 0])
+        current_player = state.get("current_player", 0)
+        my_score_bucket = _score_bucket(score[current_player])
+        opp_score_bucket = _score_bucket(score[1 - current_player])
+
         info_tuple = (
             tuple(hand_buckets),
             table_buckets,
@@ -276,6 +310,8 @@ class CFRAgent:
             current_bet,
             pending_bet,
             current_round,
+            my_score_bucket,
+            opp_score_bucket,
         )
         return str(info_tuple)
 
@@ -319,8 +355,19 @@ class CFRAgent:
 
         if current_player == traversing_player:
             # Traverse all actions for the traversing player.
+            # Regret pruning: skip actions with very negative cumulative regret
+            # (they've been proven bad). Always keep at least one action.
+            PRUNE_THRESHOLD = -300.0
+            regrets = self.regret_sum.get(info_key, {})
+            explore_actions = [
+                a for a in abstract_actions
+                if regrets.get(a, 0.0) > PRUNE_THRESHOLD
+            ]
+            if not explore_actions:
+                explore_actions = abstract_actions
+
             action_values: Dict[int, float] = {}
-            for abs_a in abstract_actions:
+            for abs_a in explore_actions:
                 real_a = a2r[abs_a]
                 next_state = self._env.step_from_state(state, real_a)
                 if current_player == 0:
@@ -333,16 +380,25 @@ class CFRAgent:
                         next_state, traversing_player,
                         reach_p0, reach_p1 * strategy[abs_a],
                     )
+            # Pruned actions get node_value as their counterfactual value
+            # (equivalent to assuming they perform at average).
 
-            node_value = sum(
-                strategy[a] * action_values[a] for a in abstract_actions
+            # Node value uses explored actions weighted by strategy.
+            # Pruned actions contribute strategy weight * node_value (neutral).
+            explored_value = sum(
+                strategy[a] * action_values[a] for a in explore_actions
             )
+            explored_weight = sum(strategy[a] for a in explore_actions)
+            if explored_weight > 0 and explored_weight < 1.0:
+                node_value = explored_value / explored_weight
+            else:
+                node_value = explored_value
 
             # Update regrets weighted by opponent reach probability.
             opponent_reach = reach_p1 if current_player == 0 else reach_p0
             if info_key not in self.regret_sum:
                 self.regret_sum[info_key] = {}
-            for abs_a in abstract_actions:
+            for abs_a in explore_actions:
                 regret = opponent_reach * (action_values[abs_a] - node_value)
                 self.regret_sum[info_key][abs_a] = (
                     self.regret_sum[info_key].get(abs_a, 0.0) + regret
@@ -381,10 +437,21 @@ class CFRAgent:
     # Training
     # ------------------------------------------------------------------
 
+    # Score pairs to sample from during training. Covers all bucket
+    # combinations: low (0-4), mid (5-8), high (9-10), mao (11).
+    _SCORE_SAMPLES: list = [
+        (0, 0), (0, 5), (0, 9), (0, 11),
+        (5, 0), (5, 5), (5, 9), (5, 11),
+        (9, 0), (9, 5), (9, 9), (9, 11),
+        (11, 0), (11, 5), (11, 9),
+        # Both at 11 is impossible in real play (game ends at 12).
+    ]
+
     def train(self, num_iterations: int = 10_000) -> None:
         """
         Run CFR training for num_iterations. Each iteration traverses twice:
-        once as player 0 and once as player 1.
+        once as player 0 and once as player 1. Samples from random score
+        states to ensure coverage across all game situations.
         """
         if self._env is None:
             raise RuntimeError("CFRAgent requires a TrucoEnv for training.")
@@ -393,8 +460,12 @@ class CFRAgent:
         start_time = time.time()
 
         for i in range(1, num_iterations + 1):
-            # Sample a fresh game (chance node) — one hand traversal.
-            state = self._env.init_game_full()
+            # Sample a random score state and hand starter.
+            score_p0, score_p1 = random.choice(self._SCORE_SAMPLES)
+            hand_starter = random.randint(0, 1)
+            state = self._env.init_game_from_score(
+                score_p0, score_p1, hand_starter
+            )
 
             # Traverse as player 0, then as player 1.
             self._cfr(state, 0, 1.0, 1.0)

@@ -46,6 +46,8 @@ class TrucoEnv(gym.Env):
         self._lib.RolloutFromState.argtypes = [ctypes.c_char_p, ctypes.c_int]
         self._lib.RolloutFromState.restype = ctypes.c_void_p
         self._lib.InitGameFull.restype = ctypes.c_void_p
+        self._lib.InitGameFromScore.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        self._lib.InitGameFromScore.restype = ctypes.c_void_p
         self._lib.FreeString.argtypes = [ctypes.c_void_p]
 
         self.action_space: spaces.Discrete = spaces.Discrete(9)
@@ -83,6 +85,18 @@ class TrucoEnv(gym.Env):
         visible). Used by CFR training for tree traversal.
         """
         ptr = self._lib.InitGameFull()
+        full_state = self._parse_and_free(ptr)
+        self.current_state = full_state
+        return full_state
+
+    def init_game_from_score(
+        self, score_p0: int, score_p1: int, hand_starter: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Create a new game with specified scores and return the full GameState
+        dict. Used by CFR training for score-aware traversal.
+        """
+        ptr = self._lib.InitGameFromScore(score_p0, score_p1, hand_starter)
         full_state = self._parse_and_free(ptr)
         self.current_state = full_state
         return full_state
