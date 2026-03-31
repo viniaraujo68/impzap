@@ -42,26 +42,34 @@ def _go_card_to_str(card: Dict[str, Any], observer_owns: bool) -> str:
 
 def _strength_bucket(strength: int) -> int:
     """
-    Bucket card strength into 5 categories to reduce info set space while
-    preserving meaningful distinctions.
+    Bucket card strength into 8 categories for finer card-play distinctions.
     -1 = facedown/unknown,
-     0 = trash (4-7, strength 0-3),
-     1 = low (Q-K, strength 4-6),
-     2 = mid (A-2, strength 7-8),
-     3 = high (3, strength 9),
-     4 = manilha (strength 10+).
+     0 = weak trash (4,5 — strength 0-1),
+     1 = strong trash (6,7 — strength 2-3),
+     2 = low (Q,J — strength 4-5),
+     3 = mid (K — strength 6),
+     4 = mid-high (A — strength 7),
+     5 = high (2 — strength 8),
+     6 = top (3 — strength 9),
+     7 = manilha (strength 10+).
     """
     if strength < 0:
         return -1
-    if strength <= 3:
+    if strength <= 1:
         return 0
-    if strength <= 6:
+    if strength <= 3:
         return 1
-    if strength <= 8:
+    if strength <= 5:
         return 2
-    if strength == 9:
+    if strength == 6:
         return 3
-    return 4
+    if strength == 7:
+        return 4
+    if strength == 8:
+        return 5
+    if strength == 9:
+        return 6
+    return 7
 
 
 

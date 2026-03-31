@@ -29,7 +29,7 @@ External Sampling CFR with Go-native traversal for high-performance training.
 - **Python agent** in `agents/cfr_agent.py`: `act()` uses average strategy at play time, loads gzip JSON from Go training
 - **Training script**: `train_cfr.py` — calls Go CFR via ctypes
 - **Info set key**: `(hand_buckets, table_buckets, played_buckets, current_bet, pending_bet, current_round)` — no score (keeps space ~50k info sets)
-- **5 strength buckets**: trash(0-3), low(4-6), mid(7-8), high(9), manilha(10+)
+- **8 strength buckets**: weak-trash(0-1), strong-trash(2-3), low(4-5), mid(6:K), mid-high(7:A), high(8:2), top(9:3), manilha(10+)
 - **Action abstraction**: rank-ordered play actions (abstract 0=weakest, 2=strongest)
 - **Regret pruning**: skip actions with cumulative regret below -300.0
 - **Storage**: gzip-compressed JSON with string action keys (Python-compatible)

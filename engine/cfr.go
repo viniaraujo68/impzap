@@ -64,25 +64,36 @@ func cfrCardStrength(card Card, vira Card) int {
 	return card.Rank.Index()
 }
 
-// cfrStrengthBucket maps card strength to 5 buckets.
-// -1=facedown, 0=trash(0-3), 1=low(4-6), 2=mid(7-8), 3=high(9), 4=manilha(10+).
+// cfrStrengthBucket maps card strength to 8 buckets.
+// -1=facedown, 0=weak trash(0-1: 4,5), 1=strong trash(2-3: 6,7),
+// 2=low(4-5: Q,J), 3=mid(6: K), 4=mid-high(7: A),
+// 5=high(8: 2), 6=top(9: 3), 7=manilha(10+).
 func cfrStrengthBucket(strength int) int {
 	if strength < 0 {
 		return -1
 	}
-	if strength <= 3 {
+	if strength <= 1 {
 		return 0
 	}
-	if strength <= 6 {
+	if strength <= 3 {
 		return 1
 	}
-	if strength <= 8 {
+	if strength <= 5 {
 		return 2
 	}
-	if strength == 9 {
+	if strength == 6 {
 		return 3
 	}
-	return 4
+	if strength == 7 {
+		return 4
+	}
+	if strength == 8 {
+		return 5
+	}
+	if strength == 9 {
+		return 6
+	}
+	return 7
 }
 
 // ---------------------------------------------------------------------------
