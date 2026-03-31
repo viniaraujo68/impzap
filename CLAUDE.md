@@ -9,22 +9,28 @@ The Go engine (`engine/`) exposes CGO exports to Python:
 - `Step(actionID)` — advances the authoritative global game state.
 - `StepFromState(stateJSON, actionID)` — stateless transition on a full GameState dict, used by MCTS tree expansion.
 - `RolloutFromState(stateJSON, policyID)` — runs a full heuristic or random rollout to terminal inside Go, used by MCTS simulation. Returns `{"winner": int, "score": [int, int]}`.
+- `CFRTrain(numIterations, resumePath)` — runs Go-native CFR training. Returns `{"iterations": int, "info_sets": int}`.
+- `CFRSave(path)` / `CFRLoad(path)` — persist/load CFR tables as gzip JSON.
 
 ## Build and Execution Commands
 * **Build Go Engine**: `make build`
-* **Run Training**: `python train.py`
+* **Run REINFORCE Training**: `python train.py`
+* **Run CFR Training**: `python train_cfr.py --iterations 1000000 --output models/cfr_NAME.json.gz`
 * **Run Match/Tournament**: `python play.py`
 
 ## File Structure
 - `engine/trucolib.go`: Core game engine — rules, state struct, CGO exports (`InitGame`, `Step`, `StepFromState`).
 - `engine/rollout.go`: Rollout policies (`heuristicAction`, `randomAction`) and the `RolloutFromState` export.
+- `engine/cfr.go`: Go-native CFR traversal — tables, tree search, save/load.
+- `engine/cfr_exports.go`: CGO exports for CFR (`CFRTrain`, `CFRSave`, `CFRLoad`).
 - `agents/`: All AI agent implementations.
   - `card_utils.py`: Single source of truth for card constants and Go card dict conversion (`card_to_go`, `go_to_card`).
+  - `cfr_agent.py`: CFR agent — loads gzip JSON from Go training, uses average strategy at play time.
   - `mcts_agent.py`: PIMC-MCTS agent.
   - `heuristic_agent.py`, `random_agent.py`, `reinforce_agent.py`: Baseline agents.
 - `truco_env/env.py`: `TrucoEnv` — thin ctypes wrapper around the Go shared library.
 - `truco_env/wrappers.py`: `TrucoVectorObservation` — converts raw state dicts to fixed-size numpy vectors.
-- `models/`: Saved PyTorch model weights (`.pth` files).
+- `models/`: Saved model files — `.pth` (PyTorch/REINFORCE), `.json.gz` (gzip JSON/CFR). Gitignored due to size.
 
 ## Code Style
 * **Language**: All code, comments, terminal prints, and documentation MUST be written in English.

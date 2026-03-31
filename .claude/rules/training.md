@@ -27,7 +27,15 @@
 - 10k episodes: ~26% vs MCTS, ~84% vs Heuristic
 - 50k episodes: ~26% vs MCTS (no improvement) — confirmed plateau
 - Ceiling is architectural: static policy with no lookahead cannot close the gap against a search algorithm
-- Next step: CFR (see algorithms.md)
+
+## CFR Training
+- Go-native traversal: ~4 min per 1M iterations (vs hours in Python)
+- Training command: `python train_cfr.py --iterations N --output models/cfr_NAME.json.gz`
+- Resume: `--resume models/existing.json.gz`
+- Convergence: strategy stabilizes around 1M iterations regardless of info set count
+- 5 buckets: ~183k info sets, converges at 1M, ~41% vs Heuristic
+- 8 buckets: ~2M info sets, converges at 1M, ~50% vs Heuristic (current best)
+- Abstraction granularity is the main bottleneck, not iteration count
 
 ## Known Issues Fixed
 - Within-episode std normalization was dropped — normalizing a single episode's monotonically-discounted return sequence forces early steps of winning games into negative advantage

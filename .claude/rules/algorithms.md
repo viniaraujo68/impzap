@@ -33,7 +33,24 @@ External Sampling CFR with Go-native traversal for high-performance training.
 - **Action abstraction**: rank-ordered play actions (abstract 0=weakest, 2=strongest)
 - **Regret pruning**: skip actions with cumulative regret below -300.0
 - **Storage**: gzip-compressed JSON with string action keys (Python-compatible)
-- **Training**: self-play only, ~39 min for 1M iterations
+- **Training**: self-play only, ~4 min for 1M iterations (Go-native)
+
+**Convergence results** (8 buckets):
+- v4@1M (0.5 visits/set): 87.5% vs Random, 49.9% vs Heuristic, 48% vs MCTS, 69% vs REINFORCE
+- v4@11M (5.4 visits/set): 87.4% vs Random, 48.5% vs Heuristic, 52% vs MCTS, 63.7% vs REINFORCE
+- Strategy converges around 1M iterations; more iterations don't meaningfully improve results
+- 8 buckets closed the heuristic gap (41% with 5 buckets -> ~50% with 8) but further granularity would explode the info set space (already 2M info sets)
+- Remaining ceiling is the abstraction itself — within-bucket card distinction is lost
+
+**Version history** (models are gitignored, stored locally in `models/`):
+- `cfr_v3_5buck_1M.json.gz` — 5 buckets, 1M iters, 183k info sets
+- `cfr_v3_5buck_6M.json.gz` — 5 buckets, 6M iters, 184k info sets (converged, no improvement over 1M)
+- `cfr_v4_8buck_1M.json.gz` — 8 buckets, 1M iters, 1.97M info sets
+- `cfr_v4_8buck_11M.json.gz` — 8 buckets, 11M iters, 2.05M info sets (converged)
 
 ## HMM (Hidden Markov Models)
-Not yet implemented. Planned: temporal modeling to track opponent betting behaviors and bluffing profiles.
+Not yet implemented. Planned as an **opponent modeling layer** on top of existing agents (CFR/MCTS), not a standalone agent.
+- Track opponent betting patterns over time to detect tendencies (bluffing frequency, aggression level)
+- Hidden states represent unobservable opponent "modes" (aggressive, passive, tilted)
+- Temporal transitions capture how opponent behavior shifts during a game
+- Feed inferred opponent profile into agent decisions to shift away from Nash equilibrium and exploit detected weaknesses
