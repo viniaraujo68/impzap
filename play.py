@@ -176,7 +176,7 @@ def main() -> None:
     env = TrucoVectorObservation(base_env)
 
     cfr = CFRAgent()
-    cfr.load("models/cfr.pkl")
+    cfr.load("models/cfr_v3_5buck_1M.json.gz")
 
     random_agent = RandomAgent()
     heuristic = HeuristicAgent()
@@ -194,12 +194,12 @@ def main() -> None:
     print("\n=== Full Benchmark ===\n")
     simulate_tournament(env, cfr, random_agent, num_games=1000)
     simulate_tournament(env, cfr, heuristic, num_games=1000)
-    simulate_tournament(env, cfr, mcts, num_games=100)
     simulate_tournament(env, cfr, reinforce, num_games=1000)
-    simulate_tournament(env, heuristic, mcts, num_games=100)
-    simulate_tournament(env, reinforce, mcts, num_games=100)
-    simulate_tournament(env, reinforce, heuristic, num_games=1000)
-    simulate_tournament(env, reinforce, random_agent, num_games=1000)
+    simulate_tournament(env, cfr, mcts, num_games=100)
+    # simulate_tournament(env, heuristic, mcts, num_games=100)
+    # simulate_tournament(env, reinforce, mcts, num_games=100)
+    # simulate_tournament(env, reinforce, heuristic, num_games=1000)
+    # simulate_tournament(env, reinforce, random_agent, num_games=1000)
 
 
 if __name__ == "__main__":

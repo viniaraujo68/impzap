@@ -49,6 +49,12 @@ class TrucoEnv(gym.Env):
         self._lib.InitGameFromScore.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self._lib.InitGameFromScore.restype = ctypes.c_void_p
         self._lib.FreeString.argtypes = [ctypes.c_void_p]
+        self._lib.CFRTrain.argtypes = [ctypes.c_int, ctypes.c_char_p]
+        self._lib.CFRTrain.restype = ctypes.c_void_p
+        self._lib.CFRSave.argtypes = [ctypes.c_char_p]
+        self._lib.CFRSave.restype = ctypes.c_void_p
+        self._lib.CFRLoad.argtypes = [ctypes.c_char_p]
+        self._lib.CFRLoad.restype = ctypes.c_void_p
 
         self.action_space: spaces.Discrete = spaces.Discrete(9)
         self.observation_space: spaces.Dict = spaces.Dict({})
@@ -100,6 +106,26 @@ class TrucoEnv(gym.Env):
         full_state = self._parse_and_free(ptr)
         self.current_state = full_state
         return full_state
+
+    def cfr_train(
+        self, num_iterations: int, resume_path: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Run Go-native CFR training. Returns {"iterations": int, "info_sets": int}.
+        """
+        resume_bytes = resume_path.encode("utf-8") if resume_path else None
+        ptr = self._lib.CFRTrain(num_iterations, resume_bytes)
+        return self._parse_and_free(ptr)
+
+    def cfr_save(self, path: str) -> Dict[str, Any]:
+        """Save Go CFR tables to gzip JSON file."""
+        ptr = self._lib.CFRSave(path.encode("utf-8"))
+        return self._parse_and_free(ptr)
+
+    def cfr_load(self, path: str) -> Dict[str, Any]:
+        """Load Go CFR tables from gzip JSON file."""
+        ptr = self._lib.CFRLoad(path.encode("utf-8"))
+        return self._parse_and_free(ptr)
 
     def reset(
         self,

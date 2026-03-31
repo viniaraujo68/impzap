@@ -12,6 +12,8 @@ Uses TrucoEnv.step_from_state() for all state transitions (stateless, no global 
 
 from __future__ import annotations
 
+import gzip
+import json
 import pickle
 import random
 import sys
@@ -62,18 +64,6 @@ def _strength_bucket(strength: int) -> int:
     return 4
 
 
-def _score_bucket(score: int) -> int:
-    """
-    Bucket a player's score for info set key.
-    0 = low (0-4), 1 = mid (5-8), 2 = high (9-10), 3 = mao (11).
-    """
-    if score <= 4:
-        return 0
-    if score <= 8:
-        return 1
-    if score <= 10:
-        return 2
-    return 3
 
 
 def _build_action_maps(
@@ -236,10 +226,6 @@ class CFRAgent:
         pending_bet = state.get("pending_bet", 0)
         current_round = state.get("current_round", 0)
 
-        score = state.get("score", [0, 0])
-        my_score_bucket = _score_bucket(score[player])
-        opp_score_bucket = _score_bucket(score[1 - player])
-
         info_tuple = (
             tuple(hand_buckets),
             table_buckets,
@@ -247,8 +233,6 @@ class CFRAgent:
             current_bet,
             pending_bet,
             current_round,
-            my_score_bucket,
-            opp_score_bucket,
         )
         return str(info_tuple)
 
@@ -298,11 +282,6 @@ class CFRAgent:
 
         current_round = len(played_cards) // 2
 
-        score = state.get("score", [0, 0])
-        current_player = state.get("current_player", 0)
-        my_score_bucket = _score_bucket(score[current_player])
-        opp_score_bucket = _score_bucket(score[1 - current_player])
-
         info_tuple = (
             tuple(hand_buckets),
             table_buckets,
@@ -310,8 +289,6 @@ class CFRAgent:
             current_bet,
             pending_bet,
             current_round,
-            my_score_bucket,
-            opp_score_bucket,
         )
         return str(info_tuple)
 
@@ -437,21 +414,10 @@ class CFRAgent:
     # Training
     # ------------------------------------------------------------------
 
-    # Score pairs to sample from during training. Covers all bucket
-    # combinations: low (0-4), mid (5-8), high (9-10), mao (11).
-    _SCORE_SAMPLES: list = [
-        (0, 0), (0, 5), (0, 9), (0, 11),
-        (5, 0), (5, 5), (5, 9), (5, 11),
-        (9, 0), (9, 5), (9, 9), (9, 11),
-        (11, 0), (11, 5), (11, 9),
-        # Both at 11 is impossible in real play (game ends at 12).
-    ]
-
     def train(self, num_iterations: int = 10_000) -> None:
         """
         Run CFR training for num_iterations. Each iteration traverses twice:
-        once as player 0 and once as player 1. Samples from random score
-        states to ensure coverage across all game situations.
+        once as player 0 and once as player 1.
         """
         if self._env is None:
             raise RuntimeError("CFRAgent requires a TrucoEnv for training.")
@@ -460,12 +426,8 @@ class CFRAgent:
         start_time = time.time()
 
         for i in range(1, num_iterations + 1):
-            # Sample a random score state and hand starter.
-            score_p0, score_p1 = random.choice(self._SCORE_SAMPLES)
-            hand_starter = random.randint(0, 1)
-            state = self._env.init_game_from_score(
-                score_p0, score_p1, hand_starter
-            )
+            # Sample a fresh game (chance node) — one hand traversal.
+            state = self._env.init_game_full()
 
             # Traverse as player 0, then as player 1.
             self._cfr(state, 0, 1.0, 1.0)
@@ -541,13 +503,28 @@ class CFRAgent:
         print(f"[CFR] Saved to {filepath} ({len(self.regret_sum)} info sets)")
 
     def load(self, filepath: str) -> None:
-        """Load regret and strategy tables from a pickle file."""
-        with open(filepath, "rb") as f:
-            data = pickle.load(f)
-        self.regret_sum = data["regret_sum"]
-        self.strategy_sum = data["strategy_sum"]
-        self._iterations = data.get("iterations", 0)
+        """Load regret and strategy tables from pickle or gzip JSON."""
+        if filepath.endswith(".gz") or filepath.endswith(".json.gz"):
+            self._load_json(filepath)
+        else:
+            with open(filepath, "rb") as f:
+                data = pickle.load(f)
+            self.regret_sum = data["regret_sum"]
+            self.strategy_sum = data["strategy_sum"]
+            self._iterations = data.get("iterations", 0)
         print(
             f"[CFR] Loaded from {filepath} "
             f"({len(self.regret_sum)} info sets, {self._iterations} iterations)"
         )
+
+    def _load_json(self, filepath: str) -> None:
+        """Load from gzip-compressed JSON (Go CFR training output)."""
+        with gzip.open(filepath, "rt", encoding="utf-8") as f:
+            data = json.load(f)
+        self._iterations = data.get("iterations", 0)
+        self.regret_sum = {}
+        for key, actions in data.get("regret_sum", {}).items():
+            self.regret_sum[key] = {int(a): v for a, v in actions.items()}
+        self.strategy_sum = {}
+        for key, actions in data.get("strategy_sum", {}).items():
+            self.strategy_sum[key] = {int(a): v for a, v in actions.items()}

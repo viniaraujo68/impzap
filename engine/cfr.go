@@ -1,0 +1,539 @@
+package main
+
+import (
+	"compress/gzip"
+	"encoding/json"
+	"fmt"
+	"math/rand"
+	"os"
+	"sort"
+	"strings"
+	"time"
+)
+
+// ---------------------------------------------------------------------------
+// CFR tables — global singleton used by CGO exports
+// ---------------------------------------------------------------------------
+
+var cfrTables *CFRTables
+
+// CFRTables holds cumulative regret and strategy sums keyed by info set.
+type CFRTables struct {
+	RegretSum   map[string]map[int]float64 `json:"regret_sum"`
+	StrategySum map[string]map[int]float64 `json:"strategy_sum"`
+	Iterations  int                        `json:"iterations"`
+}
+
+func newCFRTables() *CFRTables {
+	return &CFRTables{
+		RegretSum:   make(map[string]map[int]float64),
+		StrategySum: make(map[string]map[int]float64),
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Card strength helpers
+// ---------------------------------------------------------------------------
+
+// suitPower returns the manilha tie-breaking power for a suit.
+// Diamonds=1, Spades=2, Hearts=3, Clubs=4.
+func suitPower(s Suit) int {
+	switch s {
+	case Diamonds:
+		return 1
+	case Spades:
+		return 2
+	case Hearts:
+		return 3
+	case Clubs:
+		return 4
+	}
+	return 0
+}
+
+// cfrCardStrength returns the numeric strength of a card given the vira.
+// Regular cards: rank index 0-9. Manilhas: 10 + suitPower (11-14).
+// Facedown cards return -1.
+func cfrCardStrength(card Card, vira Card) int {
+	if card.Facedown {
+		return -1
+	}
+	if IsManilha(card, vira) {
+		return 10 + suitPower(card.Suit)
+	}
+	return card.Rank.Index()
+}
+
+// cfrStrengthBucket maps card strength to 5 buckets.
+// -1=facedown, 0=trash(0-3), 1=low(4-6), 2=mid(7-8), 3=high(9), 4=manilha(10+).
+func cfrStrengthBucket(strength int) int {
+	if strength < 0 {
+		return -1
+	}
+	if strength <= 3 {
+		return 0
+	}
+	if strength <= 6 {
+		return 1
+	}
+	if strength <= 8 {
+		return 2
+	}
+	if strength == 9 {
+		return 3
+	}
+	return 4
+}
+
+// ---------------------------------------------------------------------------
+// Info set key (must match Python _info_set_key output exactly)
+// ---------------------------------------------------------------------------
+
+// tupleStr formats an int slice as a Python tuple string.
+func tupleStr(vals []int) string {
+	if len(vals) == 0 {
+		return "()"
+	}
+	parts := make([]string, len(vals))
+	for i, v := range vals {
+		parts[i] = fmt.Sprintf("%d", v)
+	}
+	if len(parts) == 1 {
+		return "(" + parts[0] + ",)"
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+// cfrInfoSetKey builds the info set key from a full GameState for the given
+// player. Uses 5-bucket card strength abstraction, no score buckets.
+// Output format matches Python's str(info_tuple).
+func cfrInfoSetKey(s *GameState, player int) string {
+	vira := s.Vira
+
+	// Player's hand as sorted bucketed strengths.
+	handBuckets := make([]int, 0, len(s.Hands[player]))
+	for _, card := range s.Hands[player] {
+		handBuckets = append(handBuckets, cfrStrengthBucket(cfrCardStrength(card, vira)))
+	}
+	sort.Ints(handBuckets)
+
+	// Table cards bucketed.
+	tableBuckets := make([]int, 0, len(s.TableCards))
+	for _, card := range s.TableCards {
+		tableBuckets = append(tableBuckets, cfrStrengthBucket(cfrCardStrength(card, vira)))
+	}
+
+	// Played cards from round history, bucketed.
+	playedBuckets := make([]int, 0)
+	for rIdx := 0; rIdx < 3; rIdx++ {
+		rnd := s.RoundHistory[rIdx]
+		starter := s.RoundStarter[rIdx]
+		for cIdx, card := range rnd {
+			owner := starter
+			if cIdx == 1 {
+				owner = 1 - starter
+			}
+			var strength int
+			if card.Facedown && owner != player {
+				strength = -1
+			} else {
+				strength = cfrCardStrength(card, vira)
+			}
+			playedBuckets = append(playedBuckets, cfrStrengthBucket(strength))
+		}
+	}
+
+	return fmt.Sprintf("(%s, %s, %s, %d, %d, %d)",
+		tupleStr(handBuckets), tupleStr(tableBuckets), tupleStr(playedBuckets),
+		s.CurrentBet, s.PendingBet, s.CurrentRound)
+}
+
+// ---------------------------------------------------------------------------
+// Action abstraction — rank-ordered play actions
+// ---------------------------------------------------------------------------
+
+// cfrBuildActionMaps remaps play actions by strength rank.
+// Abstract action 0 = play weakest, 2 = play strongest.
+// Non-play actions (3,4,5) keep their identity.
+func cfrBuildActionMaps(legalActions []int, handStrengths []int) (
+	r2a map[int]int, a2r map[int]int, abstractActions []int,
+) {
+	// Rank hand indices by strength: rank 0 = weakest.
+	type indexedStrength struct {
+		idx      int
+		strength int
+	}
+	indexed := make([]indexedStrength, len(handStrengths))
+	for i, s := range handStrengths {
+		indexed[i] = indexedStrength{i, s}
+	}
+	sort.Slice(indexed, func(i, j int) bool {
+		return indexed[i].strength < indexed[j].strength
+	})
+	indexToRank := make(map[int]int)
+	for rank, is := range indexed {
+		indexToRank[is.idx] = rank
+	}
+
+	r2a = make(map[int]int)
+	a2r = make(map[int]int)
+
+	for _, a := range legalActions {
+		if a >= 0 && a <= 2 {
+			absA := indexToRank[a]
+			r2a[a] = absA
+			a2r[absA] = a
+		} else if a >= 6 && a <= 8 {
+			handIdx := a - 6
+			absA := 6 + indexToRank[handIdx]
+			r2a[a] = absA
+			a2r[absA] = a
+		} else {
+			r2a[a] = a
+			a2r[a] = a
+		}
+	}
+
+	abstractActions = make([]int, len(legalActions))
+	for i, a := range legalActions {
+		abstractActions[i] = r2a[a]
+	}
+	return
+}
+
+// cfrHandStrengths returns the strength of each card in a player's hand.
+func cfrHandStrengths(s *GameState, player int) []int {
+	strengths := make([]int, len(s.Hands[player]))
+	for i, card := range s.Hands[player] {
+		strengths[i] = cfrCardStrength(card, s.Vira)
+	}
+	return strengths
+}
+
+// ---------------------------------------------------------------------------
+// Deep copy GameState (needed for tree branching)
+// ---------------------------------------------------------------------------
+
+func deepCopyState(s *GameState) *GameState {
+	cp := *s
+	cp.Hands[0] = append([]Card(nil), s.Hands[0]...)
+	cp.Hands[1] = append([]Card(nil), s.Hands[1]...)
+	cp.TableCards = append([]Card(nil), s.TableCards...)
+	cp.LegalActions = append([]int(nil), s.LegalActions...)
+	for i := 0; i < 3; i++ {
+		cp.RoundHistory[i] = append([]Card(nil), s.RoundHistory[i]...)
+	}
+	return &cp
+}
+
+// ---------------------------------------------------------------------------
+// Apply action directly on a GameState (no JSON round-trip)
+// ---------------------------------------------------------------------------
+
+// cfrApplyAction applies an action to the state in place.
+// Assumes the action is legal. This is the core speedup over StepFromState:
+// no JSON marshal/unmarshal overhead.
+func cfrApplyAction(s *GameState, actionID int) {
+	if s.ResetRewardFlag {
+		s.Reward = [2]float64{0.0, 0.0}
+		s.ResetRewardFlag = false
+	}
+	s.executeAction(actionID)
+	s.updateLegalActions()
+}
+
+// ---------------------------------------------------------------------------
+// Strategy computation
+// ---------------------------------------------------------------------------
+
+const cfrPruneThreshold = -300.0
+
+// cfrGetStrategy returns the current strategy via regret matching.
+func (t *CFRTables) cfrGetStrategy(infoKey string, actions []int) map[int]float64 {
+	regrets := t.RegretSum[infoKey]
+	positive := make(map[int]float64, len(actions))
+	total := 0.0
+	for _, a := range actions {
+		v := 0.0
+		if regrets != nil {
+			if r, ok := regrets[a]; ok && r > 0 {
+				v = r
+			}
+		}
+		positive[a] = v
+		total += v
+	}
+	strategy := make(map[int]float64, len(actions))
+	if total > 0 {
+		for _, a := range actions {
+			strategy[a] = positive[a] / total
+		}
+	} else {
+		uniform := 1.0 / float64(len(actions))
+		for _, a := range actions {
+			strategy[a] = uniform
+		}
+	}
+	return strategy
+}
+
+// ---------------------------------------------------------------------------
+// CFR traversal (External Sampling)
+// ---------------------------------------------------------------------------
+
+// cfrTraverse performs one CFR traversal for a single hand.
+// Returns utility for the traversing player.
+func (t *CFRTables) cfrTraverse(
+	s *GameState, traversingPlayer int,
+	reachP0, reachP1 float64,
+) float64 {
+	// Terminal check: non-zero reward or game over.
+	reward := s.Reward
+	hasReward := reward[0] != 0.0 || reward[1] != 0.0
+	if s.IsTerminal || hasReward {
+		return reward[traversingPlayer]
+	}
+
+	currentPlayer := s.CurrentPlayer
+	legalActions := s.LegalActions
+	if len(legalActions) == 0 {
+		return 0.0
+	}
+
+	// Build abstract action mapping.
+	handStrengths := cfrHandStrengths(s, currentPlayer)
+	r2a, a2r, abstractActions := cfrBuildActionMaps(legalActions, handStrengths)
+	_ = r2a
+
+	infoKey := cfrInfoSetKey(s, currentPlayer)
+	strategy := t.cfrGetStrategy(infoKey, abstractActions)
+
+	if currentPlayer == traversingPlayer {
+		// Traversing player: explore all actions (with regret pruning).
+		regrets := t.RegretSum[infoKey]
+		exploreActions := make([]int, 0, len(abstractActions))
+		for _, a := range abstractActions {
+			r := 0.0
+			if regrets != nil {
+				r = regrets[a]
+			}
+			if r > cfrPruneThreshold {
+				exploreActions = append(exploreActions, a)
+			}
+		}
+		if len(exploreActions) == 0 {
+			exploreActions = abstractActions
+		}
+
+		actionValues := make(map[int]float64, len(exploreActions))
+		for _, absA := range exploreActions {
+			realA := a2r[absA]
+			nextState := deepCopyState(s)
+			cfrApplyAction(nextState, realA)
+			if currentPlayer == 0 {
+				actionValues[absA] = t.cfrTraverse(
+					nextState, traversingPlayer,
+					reachP0*strategy[absA], reachP1,
+				)
+			} else {
+				actionValues[absA] = t.cfrTraverse(
+					nextState, traversingPlayer,
+					reachP0, reachP1*strategy[absA],
+				)
+			}
+		}
+
+		// Compute node value from explored actions.
+		exploredValue := 0.0
+		exploredWeight := 0.0
+		for _, a := range exploreActions {
+			exploredValue += strategy[a] * actionValues[a]
+			exploredWeight += strategy[a]
+		}
+		nodeValue := exploredValue
+		if exploredWeight > 0 && exploredWeight < 1.0 {
+			nodeValue = exploredValue / exploredWeight
+		}
+
+		// Update regrets.
+		opponentReach := reachP1
+		if currentPlayer == 1 {
+			opponentReach = reachP0
+		}
+		if t.RegretSum[infoKey] == nil {
+			t.RegretSum[infoKey] = make(map[int]float64)
+		}
+		for _, absA := range exploreActions {
+			regret := opponentReach * (actionValues[absA] - nodeValue)
+			t.RegretSum[infoKey][absA] += regret
+		}
+
+		return nodeValue
+
+	} else {
+		// Opponent: sample one action, update strategy sum.
+		myReach := reachP0
+		if currentPlayer == 1 {
+			myReach = reachP1
+		}
+		if t.StrategySum[infoKey] == nil {
+			t.StrategySum[infoKey] = make(map[int]float64)
+		}
+		for _, a := range abstractActions {
+			t.StrategySum[infoKey][a] += myReach * strategy[a]
+		}
+
+		// Sample action from strategy.
+		r := rand.Float64()
+		cumulative := 0.0
+		chosenAbs := abstractActions[len(abstractActions)-1]
+		for _, a := range abstractActions {
+			cumulative += strategy[a]
+			if r < cumulative {
+				chosenAbs = a
+				break
+			}
+		}
+
+		realAction := a2r[chosenAbs]
+		nextState := deepCopyState(s)
+		cfrApplyAction(nextState, realAction)
+		if currentPlayer == 0 {
+			return t.cfrTraverse(
+				nextState, traversingPlayer,
+				reachP0*strategy[chosenAbs], reachP1,
+			)
+		}
+		return t.cfrTraverse(
+			nextState, traversingPlayer,
+			reachP0, reachP1*strategy[chosenAbs],
+		)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Training
+// ---------------------------------------------------------------------------
+
+func (t *CFRTables) train(numIterations int) {
+	logInterval := numIterations / 20
+	if logInterval < 1 {
+		logInterval = 1
+	}
+	startTime := time.Now()
+
+	for i := 1; i <= numIterations; i++ {
+		gs := createNewGame()
+
+		// Traverse as player 0, then as player 1.
+		t.cfrTraverse(gs, 0, 1.0, 1.0)
+
+		// Fresh game with same deal for player 1 traversal.
+		// Reset rewards since traversal may have modified them.
+		gs2 := createNewGame()
+		t.cfrTraverse(gs2, 1, 1.0, 1.0)
+
+		t.Iterations++
+
+		if i%logInterval == 0 {
+			elapsed := time.Since(startTime).Seconds()
+			infoSets := len(t.RegretSum)
+			fmt.Printf("[CFR-Go] Iteration %d/%d (%.1fs) | Info sets: %d\n",
+				i, numIterations, elapsed, infoSets)
+		}
+	}
+
+	elapsed := time.Since(startTime).Seconds()
+	fmt.Printf("[CFR-Go] Training complete. %d iterations in %.1fs. Info sets: %d\n",
+		numIterations, elapsed, len(t.RegretSum))
+}
+
+// ---------------------------------------------------------------------------
+// Persistence — gzip-compressed JSON, readable by Python
+// ---------------------------------------------------------------------------
+
+// cfrSaveJSON is the JSON-friendly format with string keys for actions.
+type cfrSaveJSON struct {
+	RegretSum   map[string]map[string]float64 `json:"regret_sum"`
+	StrategySum map[string]map[string]float64 `json:"strategy_sum"`
+	Iterations  int                           `json:"iterations"`
+}
+
+func (t *CFRTables) save(path string) error {
+	// Convert int action keys to string for JSON compatibility.
+	saveData := cfrSaveJSON{
+		RegretSum:   make(map[string]map[string]float64, len(t.RegretSum)),
+		StrategySum: make(map[string]map[string]float64, len(t.StrategySum)),
+		Iterations:  t.Iterations,
+	}
+	for key, actions := range t.RegretSum {
+		m := make(map[string]float64, len(actions))
+		for a, v := range actions {
+			m[fmt.Sprintf("%d", a)] = v
+		}
+		saveData.RegretSum[key] = m
+	}
+	for key, actions := range t.StrategySum {
+		m := make(map[string]float64, len(actions))
+		for a, v := range actions {
+			m[fmt.Sprintf("%d", a)] = v
+		}
+		saveData.StrategySum[key] = m
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	gz := gzip.NewWriter(f)
+	defer gz.Close()
+
+	enc := json.NewEncoder(gz)
+	return enc.Encode(saveData)
+}
+
+func (t *CFRTables) load(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+
+	var saveData cfrSaveJSON
+	if err := json.NewDecoder(gz).Decode(&saveData); err != nil {
+		return err
+	}
+
+	t.Iterations = saveData.Iterations
+	t.RegretSum = make(map[string]map[int]float64, len(saveData.RegretSum))
+	t.StrategySum = make(map[string]map[int]float64, len(saveData.StrategySum))
+
+	for key, actions := range saveData.RegretSum {
+		m := make(map[int]float64, len(actions))
+		for aStr, v := range actions {
+			var a int
+			fmt.Sscanf(aStr, "%d", &a)
+			m[a] = v
+		}
+		t.RegretSum[key] = m
+	}
+	for key, actions := range saveData.StrategySum {
+		m := make(map[int]float64, len(actions))
+		for aStr, v := range actions {
+			var a int
+			fmt.Sscanf(aStr, "%d", &a)
+			m[a] = v
+		}
+		t.StrategySum[key] = m
+	}
+
+	return nil
+}
