@@ -8,6 +8,7 @@ from agents.random_agent import RandomAgent
 from agents.reinforce_agent import ReinforceAgent
 from agents.mcts_agent import MCTSAgent
 from agents.cfr_agent import CFRAgent
+from agents.hmm_agent import HMMAgent
 
 
 def translate_action(action: int, raw_state: Dict[str, Any]) -> str:
@@ -140,6 +141,10 @@ def simulate_tournament(
         terminated = False
         truncated = False
 
+        for agent in (agent_p0, agent_p1):
+            if hasattr(agent, "reset"):
+                agent.reset()
+
         while not (terminated or truncated):
             raw_state = env.raw_env.current_state
             current_player: int = raw_state["current_player"]
@@ -191,7 +196,13 @@ def main() -> None:
     reinforce = ReinforceAgent()
     reinforce.load("models/reinforce.pth")
 
+    hmm_p0 = HMMAgent(perspective=0)
+
     print("\n=== Full Benchmark ===\n")
+    simulate_tournament(env, hmm_p0, random_agent, num_games=1000)
+    simulate_tournament(env, hmm_p0, heuristic, num_games=1000)
+    simulate_tournament(env, hmm_p0, reinforce, num_games=1000)
+    simulate_tournament(env, hmm_p0, cfr, num_games=1000)
     simulate_tournament(env, cfr, random_agent, num_games=1000)
     simulate_tournament(env, cfr, heuristic, num_games=1000)
     simulate_tournament(env, cfr, reinforce, num_games=1000)
