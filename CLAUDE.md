@@ -27,6 +27,7 @@ The Go engine (`engine/`) exposes CGO exports to Python:
   - `card_utils.py`: Single source of truth for card constants and Go card dict conversion (`card_to_go`, `go_to_card`).
   - `cfr_agent.py`: CFR agent — loads gzip JSON from Go training, uses average strategy at play time.
   - `mcts_agent.py`: PIMC-MCTS agent.
+  - `hmm_agent.py`: HMM opponent-modeling agent — infers behavioral state (Aggressive/Passive/Bluffing), exploits detected tendencies.
   - `heuristic_agent.py`, `random_agent.py`, `reinforce_agent.py`: Baseline agents.
 - `truco_env/env.py`: `TrucoEnv` — thin ctypes wrapper around the Go shared library.
 - `truco_env/wrappers.py`: `TrucoVectorObservation` — converts raw state dicts to fixed-size numpy vectors.

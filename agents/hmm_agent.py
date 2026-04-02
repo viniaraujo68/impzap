@@ -50,11 +50,23 @@ class HMMModel:
     3-state HMM for opponent behavior inference.
 
     Maintains a belief vector over hidden states and updates it after each
-    completed hand using the forward algorithm with hand-tuned transition
-    and emission matrices.
+    completed hand using the forward algorithm. Emission and transition
+    matrices are calibrated from match data and optionally adapt online
+    via exponential moving average soft counts.
     """
 
-    def __init__(self) -> None:
+    # Online adaptation rate for the dominant state's emission row.
+    # Only the highest-responsibility state adapts, preventing row collapse.
+    ADAPT_RATE = 0.003
+    # Minimum emission probability — prevents any observation from being
+    # driven to zero, preserving state distinguishability.
+    EMISSION_FLOOR = 0.02
+    # Minimum responsibility to trigger adaptation for a state.
+    ADAPT_RESPONSIBILITY_MIN = 0.50
+
+    def __init__(self, adapt: bool = True) -> None:
+        self._adapt = adapt
+
         # Initial state distribution.
         self.pi = np.array([0.40, 0.40, 0.20])
 
@@ -66,33 +78,89 @@ class HMMModel:
         ])
 
         # Emission matrix B[s][o] = P(observation_o | state_s).
-        #              FOLD  P_LOSS P_WIN  R_WIN  R_LOSS
+        # Calibrated from 2000-game tournaments against known agents.
+        # Rows maintain clear separation on the key distinguishing signals:
+        # - Aggressive: moderate FOLD (they do fold weak hands), near-zero
+        #   R_LOSS (disciplined — only raise with real cards)
+        # - Passive: high FOLD, very low raise frequency
+        # - Bluffing: low FOLD, high raise frequency, high R_LOSS
+        #              FOLD   P_LOSS  P_WIN  R_WIN  R_LOSS
         self.emission = np.array([
-            [0.05, 0.10, 0.15, 0.45, 0.25],  # Aggressive
-            [0.30, 0.30, 0.25, 0.10, 0.05],  # Passive
-            [0.10, 0.10, 0.10, 0.30, 0.40],  # Bluffing
+            [0.20, 0.27, 0.30, 0.20, 0.03],  # Aggressive
+            [0.40, 0.25, 0.20, 0.10, 0.05],  # Passive
+            [0.08, 0.15, 0.12, 0.35, 0.30],  # Bluffing
         ])
 
         self.belief: np.ndarray = self.pi.copy()
+        self._prev_belief: np.ndarray = self.pi.copy()
 
     def reset(self) -> None:
-        """Reset belief to prior distribution (between games)."""
+        """Reset belief to prior distribution (between games).
+        Matrices are NOT reset — adaptation carries across games."""
         self.belief = self.pi.copy()
+        self._prev_belief = self.pi.copy()
 
     def update(self, observation: int) -> None:
         """
         Bayesian belief update after observing one hand outcome.
         new_belief[s] = B[s][obs] * sum_over_s'(belief[s'] * A[s'][s])
-        Then normalize.
+        Then normalize. Optionally adapts emission and transition matrices.
         """
         predicted = self.belief @ self.transition  # shape (3,)
         likelihood = self.emission[:, observation]  # shape (3,)
         unnormalized = likelihood * predicted
         total = unnormalized.sum()
         if total > 0:
-            self.belief = unnormalized / total
+            new_belief = unnormalized / total
         else:
-            self.belief = self.pi.copy()
+            new_belief = self.pi.copy()
+
+        if self._adapt:
+            self._adapt_matrices(new_belief, observation)
+
+        self._prev_belief = self.belief.copy()
+        self.belief = new_belief
+
+    def _adapt_matrices(
+        self, new_belief: np.ndarray, observation: int
+    ) -> None:
+        """
+        Online adaptation of emission and transition matrices.
+
+        Only the dominant state (highest responsibility, above threshold)
+        has its emission row adapted. Non-dominant rows stay fixed, which
+        prevents all rows from collapsing toward the same observed
+        distribution when playing a single opponent type.
+
+        A minimum emission floor ensures no observation probability is
+        driven to zero, preserving the model's ability to distinguish states.
+        """
+        alpha = self.ADAPT_RATE
+        dominant = int(np.argmax(new_belief))
+
+        # Only adapt emission for the dominant state.
+        if new_belief[dominant] >= self.ADAPT_RESPONSIBILITY_MIN:
+            target = np.zeros(NUM_OBS)
+            target[observation] = 1.0
+            self.emission[dominant] = (
+                (1.0 - alpha) * self.emission[dominant]
+                + alpha * target
+            )
+            # Apply floor and re-normalize.
+            self.emission[dominant] = np.maximum(
+                self.emission[dominant], self.EMISSION_FLOOR
+            )
+            self.emission[dominant] /= self.emission[dominant].sum()
+
+        # Adapt transition: only the dominant previous state's row.
+        prev_dominant = int(np.argmax(self._prev_belief))
+        if self._prev_belief[prev_dominant] >= self.ADAPT_RESPONSIBILITY_MIN:
+            target_trans = new_belief / new_belief.sum()
+            self.transition[prev_dominant] = (
+                (1.0 - alpha) * self.transition[prev_dominant]
+                + alpha * target_trans
+            )
+            self.transition[prev_dominant] /= self.transition[prev_dominant].sum()
 
     def dominant_state(self) -> Tuple[int, float]:
         """Return (state_id, confidence) for the most likely hidden state."""
@@ -110,16 +178,18 @@ class HMMAgent:
 
     name: str = "HMM"
 
-    def __init__(self, perspective: int = 0) -> None:
+    def __init__(self, perspective: int = 0, adapt: bool = False) -> None:
         """
         Parameters
         ----------
         perspective : int
             Which player this agent controls (0 or 1). Used to determine
             which reward signal indicates hand outcome.
+        adapt : bool
+            Whether the HMM matrices adapt online during play.
         """
         self._perspective = perspective
-        self._model = HMMModel()
+        self._model = HMMModel(adapt=adapt)
 
         # Per-hand tracking.
         self._opponent_raised = False
@@ -290,7 +360,7 @@ class HMMAgent:
         # --- Bet response (truco/raise or mao-de-onze) ---
         if is_bet_decision:
             action = self._bet_response(
-                legal_actions, state, num_strong, num_manilha,
+                legal_actions, state, num_strong, num_manilha, max_str,
                 opp_state, exploiting,
             )
             if action == 3:
@@ -315,6 +385,7 @@ class HMMAgent:
         state: Dict[str, Any],
         num_strong: int,
         num_manilha: int,
+        max_str: int,
         opp_state: int,
         exploiting: bool,
     ) -> int:
@@ -327,11 +398,13 @@ class HMMAgent:
 
         if exploiting:
             if opp_state == STATE_BLUFFING:
-                # Opponent likely bluffing — call with weaker hands,
-                # re-raise with anything decent.
-                if 3 in legal_actions and num_strong >= 1:
+                # Opponent raises with weak hands but never folds our
+                # re-raises. Keep re-raise threshold strict (same as
+                # neutral), but widen calling range since their raise
+                # doesn't signal real strength.
+                if 3 in legal_actions and (num_strong >= 2 or num_manilha >= 1):
                     return 3
-                if 4 in legal_actions:
+                if 4 in legal_actions and (num_strong >= 1 or max_str >= 6):
                     return 4
                 return 5 if 5 in legal_actions else random.choice(legal_actions)
 
@@ -345,13 +418,10 @@ class HMMAgent:
                 return 5 if 5 in legal_actions else random.choice(legal_actions)
 
             if opp_state == STATE_AGGRESSIVE:
-                # Aggressive opponent raises often — their raises are less
-                # informative. Call with decent hands, re-raise with strong.
-                if 3 in legal_actions and (num_strong >= 2 or num_manilha >= 1):
-                    return 3
-                if num_strong >= 1 and 4 in legal_actions:
-                    return 4
-                return 5 if 5 in legal_actions else random.choice(legal_actions)
+                # Aggressive but disciplined (R_LOSS ~1%). Their strategy is
+                # too balanced to exploit at the raise/fold level — fall
+                # through to neutral play below.
+                pass
 
         # Neutral / low confidence — standard heuristic.
         if 3 in legal_actions and (num_strong >= 2 or num_manilha >= 1):
@@ -381,21 +451,13 @@ class HMMAgent:
                 return None
 
             if opp_state == STATE_BLUFFING:
-                # Don't raise into a bluffer — let them raise, then call.
-                # Only raise with genuinely strong hands.
-                if num_manilha >= 1 and random.random() < 0.70:
-                    return 3
-                if num_strong >= 2 and random.random() < 0.50:
-                    return 3
-                return None
+                # Against bluffers, don't need to raise proactively as much
+                # since they'll raise themselves. Fall through to neutral.
+                pass
 
             if opp_state == STATE_AGGRESSIVE:
-                # Against aggressive, raise with strong hands (they'll call).
-                if num_manilha >= 1 and random.random() < 0.85:
-                    return 3
-                if num_strong >= 2 and random.random() < 0.75:
-                    return 3
-                return None
+                # Aggressive but disciplined — fall through to neutral play.
+                pass
 
         # Neutral — standard heuristic thresholds.
         if num_manilha >= 1 and random.random() < 0.80:
