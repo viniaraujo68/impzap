@@ -9,6 +9,7 @@ from agents.reinforce_agent import ReinforceAgent
 from agents.mcts_agent import MCTSAgent
 from agents.cfr_agent import CFRAgent
 from agents.hmm_agent import HMMAgent
+from agents.hmm_cfr_agent import HMMCFRAgent
 
 
 def translate_action(action: int, raw_state: Dict[str, Any]) -> str:
@@ -197,6 +198,7 @@ def main() -> None:
     reinforce.load("models/reinforce.pth")
 
     hmm_p0 = HMMAgent(perspective=0)
+    hmm_cfr_p0 = HMMCFRAgent(perspective=0)
 
     print("\n=== Full Benchmark ===\n")
     simulate_tournament(env, hmm_p0, random_agent, num_games=1000)
@@ -207,6 +209,10 @@ def main() -> None:
     simulate_tournament(env, cfr, heuristic, num_games=1000)
     simulate_tournament(env, cfr, reinforce, num_games=1000)
     simulate_tournament(env, cfr, mcts, num_games=100)
+    simulate_tournament(env, hmm_cfr_p0, random_agent, num_games=1000)
+    simulate_tournament(env, hmm_cfr_p0, heuristic, num_games=1000)
+    simulate_tournament(env, hmm_cfr_p0, cfr, num_games=1000)
+    simulate_tournament(env, hmm_cfr_p0, mcts, num_games=100)
     # simulate_tournament(env, heuristic, mcts, num_games=100)
     # simulate_tournament(env, reinforce, mcts, num_games=100)
     # simulate_tournament(env, reinforce, heuristic, num_games=1000)
