@@ -165,6 +165,8 @@ type View struct {
 	Reward              [2]float64 `json:"reward"`
 	Winner              int        `json:"winner"`
 	PlayedCards         []string   `json:"played_cards"`
+	RoundStarters       [3]int     `json:"round_starters"`
+	RoundWinners        [3]int     `json:"round_winners"`
 }
 
 var gameState *GameState
@@ -625,6 +627,7 @@ func (s *GameState) Marshal() string {
 		Hand: serializedHand, Vira: s.Vira.String(), TableCards: tableCards,
 		CurrentBet: s.CurrentBet, WaitingForMaoDeOnze: s.WaitingForMaoDeOnze,
 		LegalActions: s.LegalActions, Reward: s.Reward, Winner: s.Winner, PlayedCards: playedCards,
+		RoundStarters: s.RoundStarter, RoundWinners: s.RoundWinners,
 	}
 	data, _ := json.Marshal(view)
 	return string(data)

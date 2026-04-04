@@ -28,25 +28,34 @@ External Sampling CFR with Go-native traversal for high-performance training.
 - **CGO exports** in `engine/cfr_exports.go`: `CFRTrain`, `CFRSave`, `CFRLoad`
 - **Python agent** in `agents/cfr_agent.py`: `act()` uses average strategy at play time, loads gzip JSON from Go training
 - **Training script**: `train_cfr.py` — calls Go CFR via ctypes
-- **Info set key**: `(hand_buckets, table_buckets, played_buckets, current_bet, pending_bet, current_round)` — no score (keeps space ~50k info sets)
+- **Info set key** (v8): `(hand_sorted, my_table_bucket, opp_table_bucket, round_history, current_bet, pending_bet)`
+- `hand_sorted`: sorted 8-bucket strengths of remaining hand cards
+- `my_table_bucket` / `opp_table_bucket`: ordered table (distinguishes who played which card this round; -1 if not played)
+- `round_history`: tuple of `(outcome, opp_bucket)` per completed round. `outcome`: 0=I_won, 1=opp_won, 2=tie. `opp_bucket`: full 8-bucket value of opp's face-up card (-1 if facedown). This is the key structural improvement over v4: explicit round outcomes + per-round opp card history.
 - **8 strength buckets**: weak-trash(0-1), strong-trash(2-3), low(4-5), mid(6:K), mid-high(7:A), high(8:2), top(9:3), manilha(10+)
 - **Action abstraction**: rank-ordered play actions (abstract 0=weakest, 2=strongest)
 - **Regret pruning**: skip actions with cumulative regret below -300.0
 - **Storage**: gzip-compressed JSON with string action keys (Python-compatible)
-- **Training**: self-play only, ~4 min for 1M iterations (Go-native)
+- **Training**: self-play only, ~6 min for 2M iterations (Go-native)
 
-**Convergence results** (8 buckets):
-- v4@1M (0.5 visits/set): 87.5% vs Random, 49.9% vs Heuristic, 48% vs MCTS, 69% vs REINFORCE
-- v4@11M (5.4 visits/set): 87.4% vs Random, 48.5% vs Heuristic, 52% vs MCTS, 63.7% vs REINFORCE
-- Strategy converges around 1M iterations; more iterations don't meaningfully improve results
-- 8 buckets closed the heuristic gap (41% with 5 buckets -> ~50% with 8) but further granularity would explode the info set space (already 2M info sets)
-- Remaining ceiling is the abstraction itself — within-bucket card distinction is lost
+**Why v4 key was limited**:
+- `played_buckets` (flat list of all played cards) had no explicit round-winner encoding — CFR had to infer round context from card positions, which it couldn't reliably
+- `table_buckets` was sorted, losing the distinction between "I'm winning this round" vs "I'm losing this round"
+- Both players' cards were in the flat list, inflating info sets without proportional gain
+
+**v8 convergence results** (84K info sets, 23 visits/set at 2M iters):
+- 89.3% vs Random (+1.9 pp vs v4@11M)
+- 46.7–48.5% vs Heuristic (on par with v4@11M, within noise)
+- 55.0% vs MCTS (+3 pp vs v4@11M)
+- Beats v4@11M in head-to-head: 87.5%
+- 24x fewer info sets, 5.5x fewer training iterations than v4@11M
 
 **Version history** (models are gitignored, stored locally in `models/`):
 - `cfr_v3_5buck_1M.json.gz` — 5 buckets, 1M iters, 183k info sets
 - `cfr_v3_5buck_6M.json.gz` — 5 buckets, 6M iters, 184k info sets (converged, no improvement over 1M)
 - `cfr_v4_8buck_1M.json.gz` — 8 buckets, 1M iters, 1.97M info sets
 - `cfr_v4_8buck_11M.json.gz` — 8 buckets, 11M iters, 2.05M info sets (converged)
+- `cfr_v8_fullbucket_2M.json.gz` — v8 key (round history), 2M iters, 84K info sets (**current**)
 
 ## HMM (Hidden Markov Model)
 Standalone opponent-modeling agent that infers behavioral state and exploits detected tendencies.

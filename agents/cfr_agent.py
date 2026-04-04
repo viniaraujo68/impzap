@@ -196,8 +196,17 @@ class CFRAgent:
     def _info_set_key(state: Dict[str, Any], player: int) -> str:
         """
         Build an information set key from the full GameState for the given
-        player. Uses bucketed card strength abstraction to keep the info set
-        space tractable. Produces the same key format as _info_set_key_from_view.
+        player. Produces the same key format as _info_set_key_from_view.
+
+        Key: (hand_sorted, my_table_bucket, opp_table_bucket, round_history,
+               current_bet, pending_bet)
+          - hand_sorted: sorted bucketed strengths of remaining hand cards
+          - my_table_bucket: bucket of player's card on the table (-1 if none)
+          - opp_table_bucket: bucket of opponent's card (-1 if none or facedown)
+          - round_history: tuple of (outcome, opp_coarse) per completed round.
+            outcome: 0=won, 1=lost, 2=tie.
+            opp_coarse: -1=facedown, 0=trash(bucket 0-3), 1=strong(bucket 4-7).
+          - current_bet, pending_bet: bet negotiation state
         """
         vira_str = go_to_card(state["vira"])
 
@@ -209,38 +218,57 @@ class CFRAgent:
             for c in state["hands"][player]
         )
 
-        # Table cards as bucketed strength tuple.
-        table_buckets = tuple(
-            _strength_bucket(card_strength(go_to_card(c), vira_str))
-            for c in state.get("table_cards", [])
-        )
+        # Table card: ordered (my card vs opponent's card).
+        # At any decision point, the table has 0 or 1 card played by the round starter.
+        my_table_bucket = -1
+        opp_table_bucket = -1
+        table_cards_raw = state.get("table_cards", [])
+        if len(table_cards_raw) == 1:
+            current_round = state.get("current_round", 0)
+            round_starters = state.get("round_starter", [-1, -1, -1])
+            round_starter = round_starters[current_round]
+            b = _strength_bucket(card_strength(go_to_card(table_cards_raw[0]), vira_str))
+            if round_starter == player:
+                my_table_bucket = b
+            else:
+                opp_table_bucket = b
 
-        # Played cards from round_history, bucketed.
-        round_starters = state.get("round_starter", [-1, -1, -1])
+        # Round history: (outcome, opp_card_coarse) per completed round.
+        current_round = state.get("current_round", 0)
+        round_winners_raw = state.get("round_winners", [-1, -1, -1])
+        round_starters_raw = state.get("round_starter", [-1, -1, -1])
         round_history_raw = state.get("round_history", [[], [], []])
-        played_buckets: List[int] = []
-        for r_idx, rnd in enumerate(round_history_raw):
-            starter = round_starters[r_idx]
-            for c_idx, card in enumerate(rnd):
-                owner = starter if c_idx == 0 else 1 - starter
-                card_str = _go_card_to_str(
-                    card, observer_owns=(owner == player)
-                )
-                played_buckets.append(
-                    _strength_bucket(card_strength(card_str, vira_str))
-                )
+        round_history: List[tuple] = []
+        for r in range(current_round):
+            w = round_winners_raw[r]
+            if w == -1:
+                outcome = 2
+            elif w == player:
+                outcome = 0
+            else:
+                outcome = 1
+
+            # Opponent's card: starter plays first (index 0), other plays second (index 1).
+            rnd = round_history_raw[r]
+            starter = round_starters_raw[r]
+            opp_card = rnd[1] if starter == player else rnd[0]
+
+            if opp_card.get("facedown", False):
+                opp_bucket = -1
+            else:
+                opp_bucket = _strength_bucket(card_strength(go_to_card(opp_card), vira_str))
+            round_history.append((outcome, opp_bucket))
 
         current_bet = state.get("current_bet_value", 1)
         pending_bet = state.get("pending_bet", 0)
-        current_round = state.get("current_round", 0)
 
         info_tuple = (
             tuple(hand_buckets),
-            table_buckets,
-            tuple(played_buckets),
+            my_table_bucket,
+            opp_table_bucket,
+            tuple(round_history),
             current_bet,
             pending_bet,
-            current_round,
         )
         return str(info_tuple)
 
@@ -254,7 +282,7 @@ class CFRAgent:
     ) -> str:
         """
         Build an info set key from a View state (play time).
-        Uses the same bucketed card strength abstraction as _info_set_key.
+        Uses the same key format as _info_set_key.
         """
         vira = state.get("vira", "")
         hand = state.get("hand", [])
@@ -262,16 +290,49 @@ class CFRAgent:
             _strength_bucket(card_strength(c, vira)) for c in hand if c
         )
 
-        # Filter empty strings: the View pads table_cards to 2 entries.
+        # Table card: ordered (my card vs opponent's card).
+        # The View pads table_cards to 2 entries with empty strings.
+        me = state.get("current_player", 0)
         table_cards_raw = [c for c in state.get("table_cards", []) if c]
-        table_buckets = tuple(
-            _strength_bucket(card_strength(c, vira)) for c in table_cards_raw
-        )
-
         played_cards = state.get("played_cards", [])
-        played_buckets = tuple(
-            _strength_bucket(card_strength(c, vira)) for c in played_cards
-        )
+        current_round = len(played_cards) // 2
+        my_table_bucket = -1
+        opp_table_bucket = -1
+        if len(table_cards_raw) == 1:
+            round_starters = state.get("round_starters", [-1, -1, -1])
+            round_starter = round_starters[current_round]
+            b = _strength_bucket(card_strength(table_cards_raw[0], vira))
+            if round_starter == me:
+                my_table_bucket = b
+            else:
+                opp_table_bucket = b
+
+        # Round history: (outcome, opp_card_coarse) per completed round.
+        round_winners = state.get("round_winners", [-1, -1, -1])
+        round_starters = state.get("round_starters", [-1, -1, -1])
+        round_history: List[tuple] = []
+        for r in range(current_round):
+            w = round_winners[r]
+            if w == -1:
+                outcome = 2
+            elif w == me:
+                outcome = 0
+            else:
+                outcome = 1
+
+            # Identify opponent's card from played_cards.
+            # played_cards[2r] = round_starters[r]'s card, [2r+1] = other player's card.
+            starter = round_starters[r]
+            if starter == me:
+                opp_card_str = played_cards[2 * r + 1]
+            else:
+                opp_card_str = played_cards[2 * r]
+
+            if opp_card_str == "FACEDOWN" or not opp_card_str:
+                opp_bucket = -1
+            else:
+                opp_bucket = _strength_bucket(card_strength(opp_card_str, vira))
+            round_history.append((outcome, opp_bucket))
 
         current_bet = state.get("current_bet_value", 1)
 
@@ -288,15 +349,13 @@ class CFRAgent:
                     pending_bet = _BET_LADDER[i + 1]
                     break
 
-        current_round = len(played_cards) // 2
-
         info_tuple = (
             tuple(hand_buckets),
-            table_buckets,
-            played_buckets,
+            my_table_bucket,
+            opp_table_bucket,
+            tuple(round_history),
             current_bet,
             pending_bet,
-            current_round,
         )
         return str(info_tuple)
 

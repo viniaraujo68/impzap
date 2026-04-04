@@ -115,8 +115,42 @@ func tupleStr(vals []int) string {
 	return "(" + strings.Join(parts, ", ") + ")"
 }
 
+// cfrOppCardBucket returns the opponent's card bucket for the round history:
+// -1 = facedown/unknown, 0-7 = card strength bucket (same as cfrStrengthBucket).
+func cfrOppCardBucket(card Card, vira Card) int {
+	if card.Facedown {
+		return -1
+	}
+	return cfrStrengthBucket(cfrCardStrength(card, vira))
+}
+
+// cfrFormatRoundHistory formats a list of (outcome, opp_coarse) pairs as a
+// Python-compatible tuple string.
+// Example: [(0,1),(1,0)] -> "((0, 1), (1, 0))"
+// Single element: [(0,1)] -> "((0, 1),)"
+// Empty: [] -> "()"
+func cfrFormatRoundHistory(parts []string) string {
+	if len(parts) == 0 {
+		return "()"
+	}
+	if len(parts) == 1 {
+		return "(" + parts[0] + ",)"
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
 // cfrInfoSetKey builds the info set key from a full GameState for the given
-// player. Uses 5-bucket card strength abstraction, no score buckets.
+// player. Uses 8-bucket card strength abstraction.
+//
+// Key format: (hand_sorted, my_table_bucket, opp_table_bucket, round_history, current_bet, pending_bet)
+//   - hand_sorted: sorted bucketed strengths of remaining hand cards
+//   - my_table_bucket: bucket of player's card on the table this round (-1 if not played)
+//   - opp_table_bucket: bucket of opponent's card on the table (-1 if not played or facedown)
+//   - round_history: tuple of (outcome, opp_coarse) per completed round, from player's POV.
+//     outcome: 0=won, 1=lost, 2=tie.
+//     opp_coarse: -1=facedown, 0=trash(bucket 0-3), 1=strong(bucket 4-7).
+//   - current_bet, pending_bet: bet state
+//
 // Output format matches Python's str(info_tuple).
 func cfrInfoSetKey(s *GameState, player int) string {
 	vira := s.Vira
@@ -128,35 +162,53 @@ func cfrInfoSetKey(s *GameState, player int) string {
 	}
 	sort.Ints(handBuckets)
 
-	// Table cards bucketed.
-	tableBuckets := make([]int, 0, len(s.TableCards))
-	for _, card := range s.TableCards {
-		tableBuckets = append(tableBuckets, cfrStrengthBucket(cfrCardStrength(card, vira)))
-	}
-
-	// Played cards from round history, bucketed.
-	playedBuckets := make([]int, 0)
-	for rIdx := 0; rIdx < 3; rIdx++ {
-		rnd := s.RoundHistory[rIdx]
-		starter := s.RoundStarter[rIdx]
-		for cIdx, card := range rnd {
-			owner := starter
-			if cIdx == 1 {
-				owner = 1 - starter
-			}
-			var strength int
-			if card.Facedown && owner != player {
-				strength = -1
-			} else {
-				strength = cfrCardStrength(card, vira)
-			}
-			playedBuckets = append(playedBuckets, cfrStrengthBucket(strength))
+	// Table card: ordered (my card vs opponent's card).
+	// At any decision point, table has 0 or 1 card.
+	// The card belongs to the round starter of the current round.
+	myTableBucket := -1
+	oppTableBucket := -1
+	if len(s.TableCards) == 1 {
+		roundStarter := s.RoundStarter[s.CurrentRound]
+		b := cfrStrengthBucket(cfrCardStrength(s.TableCards[0], vira))
+		if roundStarter == player {
+			myTableBucket = b
+		} else {
+			oppTableBucket = b
 		}
 	}
 
-	return fmt.Sprintf("(%s, %s, %s, %d, %d, %d)",
-		tupleStr(handBuckets), tupleStr(tableBuckets), tupleStr(playedBuckets),
-		s.CurrentBet, s.PendingBet, s.CurrentRound)
+	// Round history: (outcome, opp_card_coarse) per completed round.
+	// outcome: 0=I_won, 1=opp_won, 2=tie.
+	// opp_card_coarse: coarsened view of what opponent played face-up (-1=facedown, 0=trash, 1=strong).
+	roundHistoryParts := make([]string, 0, s.CurrentRound)
+	for r := 0; r < s.CurrentRound; r++ {
+		w := s.RoundWinners[r]
+		var outcome int
+		if w == -1 {
+			outcome = 2
+		} else if w == player {
+			outcome = 0
+		} else {
+			outcome = 1
+		}
+
+		// Opponent's card in round r: starter plays first (index 0), other plays second (index 1).
+		rnd := s.RoundHistory[r]
+		starter := s.RoundStarter[r]
+		var oppCard Card
+		if starter == player {
+			oppCard = rnd[1] // I started, opp played second.
+		} else {
+			oppCard = rnd[0] // Opp started, their card is first.
+		}
+
+		oppCoarse := cfrOppCardBucket(oppCard, vira)
+		roundHistoryParts = append(roundHistoryParts, fmt.Sprintf("(%d, %d)", outcome, oppCoarse))
+	}
+
+	return fmt.Sprintf("(%s, %d, %d, %s, %d, %d)",
+		tupleStr(handBuckets), myTableBucket, oppTableBucket,
+		cfrFormatRoundHistory(roundHistoryParts), s.CurrentBet, s.PendingBet)
 }
 
 // ---------------------------------------------------------------------------

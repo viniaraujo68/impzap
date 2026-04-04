@@ -72,7 +72,7 @@ class HMMCFRAgent:
 
     def __init__(
         self,
-        cfr_model_path: str = "models/cfr_v4_8buck_11M.json.gz",
+        cfr_model_path: str = "models/cfr_v8_fullbucket_2M.json.gz",
         perspective: int = 0,
         adapt: bool = False,
     ) -> None:
