@@ -10,6 +10,8 @@ from agents.mcts_agent import MCTSAgent
 from agents.cfr_agent import CFRAgent
 from agents.hmm_agent import HMMAgent
 from agents.hmm_cfr_agent import HMMCFRAgent
+from agents.always_fold_agent import AlwaysFoldAgent
+from agents.always_raise_agent import AlwaysRaiseAgent
 
 
 def translate_action(action: int, raw_state: Dict[str, Any]) -> str:
@@ -199,6 +201,18 @@ def main() -> None:
 
     hmm_p0 = HMMAgent(perspective=0)
     hmm_cfr_p0 = HMMCFRAgent(perspective=0)
+    always_fold = AlwaysFoldAgent()
+    always_raise = AlwaysRaiseAgent()
+
+    print("\n=== Archetype Baselines ===\n")
+    simulate_tournament(env, heuristic, always_fold, num_games=1000)
+    simulate_tournament(env, heuristic, always_raise, num_games=1000)
+    simulate_tournament(env, cfr, always_fold, num_games=1000)
+    simulate_tournament(env, cfr, always_raise, num_games=1000)
+    simulate_tournament(env, hmm_p0, always_fold, num_games=1000)
+    simulate_tournament(env, hmm_p0, always_raise, num_games=1000)
+    simulate_tournament(env, hmm_cfr_p0, always_fold, num_games=1000)
+    simulate_tournament(env, hmm_cfr_p0, always_raise, num_games=1000)
 
     print("\n=== Full Benchmark ===\n")
     simulate_tournament(env, hmm_p0, random_agent, num_games=1000)
@@ -208,11 +222,11 @@ def main() -> None:
     simulate_tournament(env, cfr, random_agent, num_games=1000)
     simulate_tournament(env, cfr, heuristic, num_games=1000)
     simulate_tournament(env, cfr, reinforce, num_games=1000)
-    simulate_tournament(env, cfr, mcts, num_games=100)
+    simulate_tournament(env, cfr, mcts, num_games=500)
     simulate_tournament(env, hmm_cfr_p0, random_agent, num_games=1000)
     simulate_tournament(env, hmm_cfr_p0, heuristic, num_games=1000)
     simulate_tournament(env, hmm_cfr_p0, cfr, num_games=1000)
-    simulate_tournament(env, hmm_cfr_p0, mcts, num_games=100)
+    simulate_tournament(env, hmm_cfr_p0, mcts, num_games=500)
     # simulate_tournament(env, heuristic, mcts, num_games=100)
     # simulate_tournament(env, reinforce, mcts, num_games=100)
     # simulate_tournament(env, reinforce, heuristic, num_games=1000)

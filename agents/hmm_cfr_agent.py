@@ -2,58 +2,70 @@
 HMM+CFR combined agent for Truco Paulista (1v1).
 
 Uses CFR average strategy (Nash equilibrium approximation) as the base
-policy and tilts the action distribution based on opponent behavioral
-state inferred by an HMM. The CFR strategy anchors decisions; the HMM
-layer exploits detectable opponent tendencies without abandoning the
-game-theoretic foundation.
+policy and exploits opponent behavioral state inferred by an HMM.
 
-Reweighting rules (applied only when HMM confidence >= 0.45):
-  vs Passive : raise x2.0, fold x0.5  -- they fold to raises
-  vs Bluffing: call  x2.0, fold x0.5  -- their raises are weak
-  vs Aggressive: no adjustment         -- too balanced to exploit
+Dispatch rules (applied only when HMM confidence >= 0.45):
+  vs Passive  : hybrid dispatch — HMM explicit raise/fold logic replaces
+                CFR sampling. CFR Nash assigns low raise probability from
+                self-play; multiplicative reweighting cannot overcome this.
+                HMM explicit logic raises at 60-90% vs Passive, matching
+                the standalone HMM's exploitation ceiling.
+  vs Bluffing : CFR base strategy with multiplicative reweight (call x2.0,
+                fold x0.5). CFR already assigns reasonable call probability
+                so the tilt is effective here.
+  vs Aggressive / low confidence : pure CFR.
 """
 
 from __future__ import annotations
 
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from agents.cfr_agent import CFRAgent, _build_action_maps, _get_hand_strengths_view
 from agents.hmm_agent import (
+    HMMAgent,
     HMMModel,
     STATE_AGGRESSIVE,
     STATE_PASSIVE,
     STATE_BLUFFING,
     CONFIDENCE_THRESHOLD,
     OBS_FOLD,
-    OBS_PASSIVE_LOSS,
     OBS_PASSIVE_WIN,
+    OBS_PASSIVE_LOSS,
     OBS_RAISE_WIN,
     OBS_RAISE_LOSS,
 )
 
 
 # ---------------------------------------------------------------------------
-# Reweighting factors (applied to abstract action IDs)
+# Reweighting factors for Bluffing state (abstract action IDs)
 # abstract 3 = raise, 4 = accept/call, 5 = fold
 # ---------------------------------------------------------------------------
-_RAISE_BOOST_VS_PASSIVE: float = 2.0
-_FOLD_REDUCTION_VS_PASSIVE: float = 0.5
-_CALL_BOOST_VS_PASSIVE: float = 2.0
-
 _CALL_BOOST_VS_BLUFFING: float = 2.0
 _FOLD_REDUCTION_VS_BLUFFING: float = 0.5
+
+# Passive dispatch uses the same threshold as the Bluffing reweight.
+# A single FOLD observation moves Passive belief to ~0.62, above this
+# threshold, so the dispatch fires reliably from hand 2 onward vs pure
+# Passive opponents. The small cost vs mixed opponents (e.g. Random) is
+# acceptable given the large gain vs exploitable Passive archetypes.
+_PASSIVE_DISPATCH_THRESHOLD: float = 0.45
 
 
 class HMMCFRAgent:
     """
     Combined HMM opponent-modeling + CFR strategy agent.
 
-    The CFR table provides the base mixed strategy for each info set.
-    The HMM infers opponent behavioral state (Aggressive / Passive /
-    Bluffing) from per-hand observations. When confidence is sufficient,
-    the CFR probability vector is reweighted to exploit the inferred
-    tendency before sampling.
+    The CFR table is the base policy. The HMM infers opponent behavioral
+    state (Aggressive / Passive / Bluffing) from per-hand observations.
+
+    vs Passive: delegates raise/fold decisions to HMMAgent's explicit
+    threshold logic, which is calibrated to exploit passive behavior at
+    60-90% raise rates. CFR handles card play.
+
+    vs Bluffing: stays on CFR with a call-boost / fold-reduction reweight.
+
+    vs Aggressive / low confidence: pure CFR.
     """
 
     name: str = "HMM+CFR"
@@ -78,8 +90,13 @@ class HMMCFRAgent:
         self._cfr = CFRAgent()
         self._cfr.load(cfr_model_path)
         self._model = HMMModel(adapt=adapt)
+        # HMMAgent instance used only as a stateless delegate for its
+        # explicit action-selection helpers (_maybe_raise, _bet_response,
+        # _pick_card, _hand_quality). Tracking and HMM updates are managed
+        # by this class.
+        self._hmm_delegate = HMMAgent(perspective=perspective, adapt=False)
 
-        # Per-hand tracking (mirrors HMMAgent).
+        # Per-hand tracking.
         self._opponent_raised: bool = False
         self._we_raised: bool = False
         self._prev_score: Optional[List[int]] = None
@@ -101,7 +118,7 @@ class HMMCFRAgent:
         self._prev_bet = 1
 
     # ------------------------------------------------------------------
-    # Hand boundary detection (identical to HMMAgent)
+    # Hand boundary detection
     # ------------------------------------------------------------------
 
     def _detect_hand_end(
@@ -152,65 +169,91 @@ class HMMCFRAgent:
         self._prev_bet = current_bet
 
     # ------------------------------------------------------------------
-    # CFR strategy lookup
+    # Action selection paths
     # ------------------------------------------------------------------
 
-    def _get_cfr_strategy(
+    def _act_passive_exploit(
+        self, state: Dict[str, Any], info: Dict[str, Any]
+    ) -> int:
+        """
+        Full HMM explicit exploitation vs Passive opponent.
+        Delegates raise/fold/card decisions to HMMAgent's helper methods,
+        which are calibrated to exploit Passive behavior aggressively.
+        CFR is bypassed entirely for this decision.
+        """
+        legal_actions: List[int] = info["legal_actions"]
+        hand: List[str] = state.get("hand", [])
+        vira: str = state.get("vira", "")
+        table_cards: List[str] = state.get("table_cards", [])
+        play_actions = [a for a in legal_actions if 0 <= a <= 2]
+        is_bet_decision = not play_actions
+
+        num_strong, num_manilha, max_str = self._hmm_delegate._hand_quality(hand, vira)
+
+        if is_bet_decision:
+            return self._hmm_delegate._bet_response(
+                legal_actions, state, num_strong, num_manilha, max_str,
+                STATE_PASSIVE, True,
+            )
+
+        if 3 in legal_actions:
+            raise_action = self._hmm_delegate._maybe_raise(
+                num_strong, num_manilha, STATE_PASSIVE, True,
+            )
+            if raise_action is not None:
+                return raise_action
+
+        return self._hmm_delegate._pick_card(play_actions, hand, vira, table_cards)
+
+    def _act_cfr(
         self,
         state: Dict[str, Any],
         info: Dict[str, Any],
-        abstract_actions: List[int],
-    ) -> Dict[int, float]:
-        """Return the CFR average strategy over abstract actions."""
+        opp_state: int,
+        exploiting: bool,
+    ) -> int:
+        """
+        CFR-based action selection with optional Bluffing reweight.
+        """
+        legal_actions: List[int] = info["legal_actions"]
+        hand_strengths = _get_hand_strengths_view(state)
+        _, a2r, abstract_actions = _build_action_maps(legal_actions, hand_strengths)
+
         info_key = CFRAgent._info_set_key_from_view(state, info)
-        return self._cfr._get_average_strategy(info_key, abstract_actions)
+        strategy = self._cfr._get_average_strategy(info_key, abstract_actions)
 
-    # ------------------------------------------------------------------
-    # Reweighting
-    # ------------------------------------------------------------------
+        if exploiting and opp_state == STATE_BLUFFING:
+            strategy = self._reweight_bluffing(strategy, abstract_actions)
 
-    def _reweight(
+        abs_action = random.choices(
+            abstract_actions,
+            weights=[strategy[a] for a in abstract_actions],
+        )[0]
+        return a2r[abs_action]
+
+    def _reweight_bluffing(
         self,
         strategy: Dict[int, float],
         abstract_actions: List[int],
-        opp_state: int,
     ) -> Dict[int, float]:
-        """
-        Apply opponent-state-conditioned reweighting to the CFR strategy.
-        Only abstract actions 3 (raise), 4 (call), 5 (fold) are modified;
-        play actions are left unchanged.
-        """
+        """Call boost + fold reduction vs Bluffing, then renormalize."""
         weights = {a: strategy[a] for a in abstract_actions}
-
-        if opp_state == STATE_PASSIVE:
-            if 3 in weights:
-                weights[3] *= _RAISE_BOOST_VS_PASSIVE
-            if 4 in weights:
-                weights[4] *= _CALL_BOOST_VS_PASSIVE
-            if 5 in weights:
-                weights[5] *= _FOLD_REDUCTION_VS_PASSIVE
-
-        elif opp_state == STATE_BLUFFING:
-            if 4 in weights:
-                weights[4] *= _CALL_BOOST_VS_BLUFFING
-            if 5 in weights:
-                weights[5] *= _FOLD_REDUCTION_VS_BLUFFING
-
-        # STATE_AGGRESSIVE: no adjustment
-
+        if 4 in weights:
+            weights[4] *= _CALL_BOOST_VS_BLUFFING
+        if 5 in weights:
+            weights[5] *= _FOLD_REDUCTION_VS_BLUFFING
         total = sum(weights.values())
         if total <= 0:
             return strategy
         return {a: weights[a] / total for a in abstract_actions}
 
     # ------------------------------------------------------------------
-    # Action selection
+    # Main entry point
     # ------------------------------------------------------------------
 
     def act(self, state: Dict[str, Any], info: Dict[str, Any]) -> int:
         """
-        Select an action by sampling from the (possibly reweighted) CFR
-        average strategy.
+        Select an action using the hybrid HMM+CFR dispatch.
 
         Parameters
         ----------
@@ -237,25 +280,14 @@ class HMMCFRAgent:
         # Track opponent behavior within the current hand.
         self._track_opponent_action(state, info)
 
-        # Build abstract action mapping.
-        hand_strengths = _get_hand_strengths_view(state)
-        _, a2r, abstract_actions = _build_action_maps(legal_actions, hand_strengths)
-
-        # CFR base strategy.
-        strategy = self._get_cfr_strategy(state, info, abstract_actions)
-
-        # Reweight based on inferred opponent state.
         opp_state, confidence = self._model.dominant_state()
-        if confidence >= CONFIDENCE_THRESHOLD and opp_state != STATE_AGGRESSIVE:
-            strategy = self._reweight(strategy, abstract_actions, opp_state)
+        exploiting = confidence >= CONFIDENCE_THRESHOLD
 
-        # Sample and map back to real action.
-        abs_action = random.choices(
-            abstract_actions,
-            weights=[strategy[a] for a in abstract_actions],
-        )[0]
+        if opp_state == STATE_PASSIVE and confidence >= _PASSIVE_DISPATCH_THRESHOLD:
+            action = self._act_passive_exploit(state, info)
+        else:
+            action = self._act_cfr(state, info, opp_state, exploiting)
 
-        real_action = a2r[abs_action]
-        if real_action == 3:
+        if action == 3:
             self._we_raised = True
-        return real_action
+        return action
