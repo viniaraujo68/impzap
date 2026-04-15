@@ -50,19 +50,36 @@ class HMMModel:
     3-state HMM for opponent behavior inference.
 
     Maintains a belief vector over hidden states and updates it after each
-    completed hand using the forward algorithm. Emission and transition
-    matrices are calibrated from match data and optionally adapt online
-    via exponential moving average soft counts.
+    completed hand using the forward algorithm. Emission matrix is calibrated
+    from match data and optionally adapts online.
+
+    Adaptation design:
+    - Only the dominant state's emission row adapts (prevents cross-row collapse).
+    - A prior regularization term pulls each update back toward the original
+      calibrated row, preventing indefinite drift when facing a single
+      opponent type for many hands.
+    - A minimum observation count per game filters early noise before adapting.
+    - A row L1-distance guard skips updates that would make any two rows
+      too similar, preserving state distinguishability.
+    - Transition matrix is NOT adapted: estimating it requires clear state
+      transitions which are unobservable in practice, and noisy updates
+      degrade belief tracking.
     """
 
-    # Online adaptation rate for the dominant state's emission row.
-    # Only the highest-responsibility state adapts, preventing row collapse.
-    ADAPT_RATE = 0.003
-    # Minimum emission probability — prevents any observation from being
-    # driven to zero, preserving state distinguishability.
+    ADAPT_RATE = 0.005
     EMISSION_FLOOR = 0.02
-    # Minimum responsibility to trigger adaptation for a state.
     ADAPT_RESPONSIBILITY_MIN = 0.50
+    # Restoring force toward the calibrated prior each update step.
+    # Prevents indefinite drift: equilibrium is ~9% toward observed
+    # distribution and ~91% toward prior, keeping calibration stable
+    # while still allowing meaningful long-session adjustment.
+    PRIOR_PULL = 0.05
+    # Minimum hands observed in the current game before adapting.
+    # Filters noise from the first few hands where belief is unreliable.
+    MIN_HANDS_BEFORE_ADAPT = 5
+    # Minimum L1 distance any two emission rows must maintain.
+    # If an update would bring any pair closer than this, skip the update.
+    MIN_ROW_L1_DISTANCE = 0.20
 
     def __init__(self, adapt: bool = True) -> None:
         self._adapt = adapt
@@ -70,7 +87,7 @@ class HMMModel:
         # Initial state distribution.
         self.pi = np.array([0.40, 0.40, 0.20])
 
-        # Transition matrix A[i][j] = P(state_j | state_i).
+        # Transition matrix A[i][j] = P(state_j | state_i). Fixed — not adapted.
         self.transition = np.array([
             [0.70, 0.15, 0.15],  # Aggressive -> ...
             [0.15, 0.70, 0.15],  # Passive -> ...
@@ -91,20 +108,24 @@ class HMMModel:
             [0.08, 0.15, 0.12, 0.35, 0.30],  # Bluffing
         ])
 
+        # Fixed calibrated prior — emission rows are regularized toward this.
+        # Never modified after construction.
+        self._emission_prior: np.ndarray = self.emission.copy()
+
         self.belief: np.ndarray = self.pi.copy()
-        self._prev_belief: np.ndarray = self.pi.copy()
+        self._hands_observed: int = 0
 
     def reset(self) -> None:
-        """Reset belief to prior distribution (between games).
-        Matrices are NOT reset — adaptation carries across games."""
+        """Reset belief and per-game hand count (between games).
+        Emission matrix is NOT reset — adaptation carries across games."""
         self.belief = self.pi.copy()
-        self._prev_belief = self.pi.copy()
+        self._hands_observed = 0
 
     def update(self, observation: int) -> None:
         """
         Bayesian belief update after observing one hand outcome.
         new_belief[s] = B[s][obs] * sum_over_s'(belief[s'] * A[s'][s])
-        Then normalize. Optionally adapts emission and transition matrices.
+        Then normalize. Optionally adapts the emission matrix.
         """
         predicted = self.belief @ self.transition  # shape (3,)
         likelihood = self.emission[:, observation]  # shape (3,)
@@ -115,52 +136,60 @@ class HMMModel:
         else:
             new_belief = self.pi.copy()
 
-        if self._adapt:
-            self._adapt_matrices(new_belief, observation)
+        self._hands_observed += 1
 
-        self._prev_belief = self.belief.copy()
+        if self._adapt:
+            self._adapt_emission(new_belief, observation)
+
         self.belief = new_belief
 
-    def _adapt_matrices(
+    def _adapt_emission(
         self, new_belief: np.ndarray, observation: int
     ) -> None:
         """
-        Online adaptation of emission and transition matrices.
+        Online adaptation of the dominant state's emission row.
 
-        Only the dominant state (highest responsibility, above threshold)
-        has its emission row adapted. Non-dominant rows stay fixed, which
-        prevents all rows from collapsing toward the same observed
-        distribution when playing a single opponent type.
-
-        A minimum emission floor ensures no observation probability is
-        driven to zero, preserving the model's ability to distinguish states.
+        Three guards prevent row collapse:
+        1. Minimum hands observed — don't adapt on early noise.
+        2. Confidence gate — only the dominant state adapts, and only when
+           belief is confident enough to assign responsibility.
+        3. Prior regularization — each update blends a restoring pull toward
+           the calibrated prior, so the equilibrium is a mixture of the
+           observed frequency and the prior, not a pure fit to one opponent.
+        4. Row L1-distance check — skip any update that would make two rows
+           too similar, directly enforcing state distinguishability.
         """
-        alpha = self.ADAPT_RATE
+        if self._hands_observed < self.MIN_HANDS_BEFORE_ADAPT:
+            return
+
         dominant = int(np.argmax(new_belief))
+        if new_belief[dominant] < self.ADAPT_RESPONSIBILITY_MIN:
+            return
 
-        # Only adapt emission for the dominant state.
-        if new_belief[dominant] >= self.ADAPT_RESPONSIBILITY_MIN:
-            target = np.zeros(NUM_OBS)
-            target[observation] = 1.0
-            self.emission[dominant] = (
-                (1.0 - alpha) * self.emission[dominant]
-                + alpha * target
-            )
-            # Apply floor and re-normalize.
-            self.emission[dominant] = np.maximum(
-                self.emission[dominant], self.EMISSION_FLOOR
-            )
-            self.emission[dominant] /= self.emission[dominant].sum()
+        alpha = self.ADAPT_RATE
+        target = np.zeros(NUM_OBS)
+        target[observation] = 1.0
 
-        # Adapt transition: only the dominant previous state's row.
-        prev_dominant = int(np.argmax(self._prev_belief))
-        if self._prev_belief[prev_dominant] >= self.ADAPT_RESPONSIBILITY_MIN:
-            target_trans = new_belief / new_belief.sum()
-            self.transition[prev_dominant] = (
-                (1.0 - alpha) * self.transition[prev_dominant]
-                + alpha * target_trans
-            )
-            self.transition[prev_dominant] /= self.transition[prev_dominant].sum()
+        # EMA update toward the observed one-hot, then pull toward prior.
+        proposed = (1.0 - alpha) * self.emission[dominant] + alpha * target
+        proposed = (
+            (1.0 - self.PRIOR_PULL) * proposed
+            + self.PRIOR_PULL * self._emission_prior[dominant]
+        )
+
+        # Apply floor and normalize.
+        proposed = np.maximum(proposed, self.EMISSION_FLOOR)
+        proposed /= proposed.sum()
+
+        # Skip if any other row would become too similar to the proposed row.
+        for other in range(NUM_STATES):
+            if other == dominant:
+                continue
+            l1 = float(np.sum(np.abs(proposed - self.emission[other])))
+            if l1 < self.MIN_ROW_L1_DISTANCE:
+                return
+
+        self.emission[dominant] = proposed
 
     def dominant_state(self) -> Tuple[int, float]:
         """Return (state_id, confidence) for the most likely hidden state."""
@@ -178,7 +207,7 @@ class HMMAgent:
 
     name: str = "HMM"
 
-    def __init__(self, perspective: int = 0, adapt: bool = False) -> None:
+    def __init__(self, perspective: int = 0, adapt: bool = True) -> None:
         """
         Parameters
         ----------

@@ -80,7 +80,12 @@ Standalone opponent-modeling agent that infers behavioral state and exploits det
 - vs Bluffing: widen calling range (call with max_str >= 6), keep re-raise strict (they never fold re-raises)
 - vs Aggressive: no exploit (falls through to neutral) — too balanced to exploit at raise/fold level
 
-**Online adaptation**: Implemented but disabled by default (adapt=False). EMA update of dominant state's emission row. Prone to row collapse when playing a single opponent type — all rows converge toward the observed distribution. Mitigated by dominant-only adaptation + emission floor (0.02), but still degrades over long sessions. Needs further work.
+**Online adaptation**: Enabled by default (adapt=True). Dominant-state-only emission adaptation with four collapse guards:
+1. **Prior regularization** (PRIOR_PULL=0.05): each update blends a restoring pull toward the calibrated prior. Equilibrium is ~9% toward empirical frequency, ~91% toward prior — prevents indefinite drift.
+2. **Minimum hands** (MIN_HANDS_BEFORE_ADAPT=5): no adaptation until belief has accumulated enough evidence per game.
+3. **Row L1-distance guard** (MIN_ROW_L1_DISTANCE=0.20): update is skipped if it would make any two rows too similar.
+4. **Transition matrix fixed**: not adapted — requires unobservable state transitions to estimate; noisy updates degrade belief tracking.
+Benchmarked at 5000 games: neutral vs all fixed archetypes (all deltas within 1 std dev). Intended benefit is against mixed/unknown opponents that don't match any calibrated archetype.
 
 **Benchmark results** (5000 games, vs Heuristic baseline):
 
@@ -95,8 +100,39 @@ Standalone opponent-modeling agent that infers behavioral state and exploits det
 - HMM excels against exploitable opponents (Passive: +12.2%)
 - Roughly neutral against balanced opponents (Heuristic: +2.1%, within noise)
 - Small leak against non-exploitable opponents where modeling adds no value (Random: -2.2%)
-- Online adaptation hurts more than helps in current form — feedback loop causes emission row collapse
+- Online adaptation is neutral vs fixed archetypes (all deltas within noise at 5000 games); designed for mixed opponents
 - HeuristicAgent observation profile: FOLD=21%, P_LOSS=27%, P_WIN=30%, R_WIN=20%, R_LOSS=1%
 - RandomAgent observation profile: FOLD=13%, P_LOSS=29%, P_WIN=14%, R_WIN=34%, R_LOSS=10%
 
 **Implementation**: `agents/hmm_agent.py` — `HMMModel` (belief updates, matrices) + `HMMAgent` (tracking, action selection)
+
+## HMM+CFR Combined Agent
+
+Hybrid agent: HMM opponent modeling + CFR strategy, with dispatch redesigned to maximize Heuristic performance.
+
+**Dispatch rules**:
+- **Passive exploit** (probe window OR fold-rate confirmed): `_act_hmm(STATE_PASSIVE, exploiting=True)` — aggressive raise/fold logic calibrated for AlwaysFold-class opponents.
+- **Bluffing detected** (confidence >= 0.45): `_act_cfr` with Bluffing reweight (call x2.0, fold x0.5) — CFR integrates the reweight into the full strategy distribution better than HMM's simple x2 call boost.
+- **Otherwise** (Aggressive or low confidence): `_act_hmm(opp_state, exploiting)` — HMM neutral (heuristic-style) outperforms CFR Nash vs balanced opponents like Heuristic.
+
+**Passive detection (fold-rate)**:
+- Probe window: first 3 hands always use Passive exploit to generate fold observations.
+- `passive_confirmed = (_raise_hands >= 2) AND (fold_rate >= 0.70)`. Requires at least 2 raise hands and 70% fold rate. Single-fold confirmation was a false positive: Heuristic folds ~25% of raised hands.
+- AlwaysFold: fold_rate=1.0 → confirmed after 2 probe hands (stays in Passive exploit for entire game).
+- Heuristic: fold_rate≈0.25 → not confirmed → exits to HMM neutral post-window.
+
+**Rationale for HMM as post-probe default (not CFR)**:
+CFR Nash strategy averages 46.1% vs HeuristicAgent. HMM neutral (heuristic fallback) averages 51.2%. Nash does not maximize win-rate against fixed non-Nash opponents. Using CFR as the default post-probe degraded Heuristic performance to 45.1% (worse than both baselines). Switching to HMM as the default recovers the advantage.
+
+**Benchmark results** (5000 games):
+
+| Opponent | HMM+CFR | HMM | CFR |
+|---|---|---|---|
+| AlwaysFold | **97.1%** | 95.9% | 61.6% |
+| Heuristic | **50.8%** | 51.2% | 46.1% |
+| Random | 85.3% | 87.0% | 88.6% |
+| AlwaysRaise | ~71% | 68.0% | 76.2% |
+
+HMM+CFR dominates both baselines vs AlwaysFold and matches HMM vs Heuristic. Small regression vs Random and AlwaysRaise (CFR is better there, but these are less important matchups).
+
+**Implementation**: `agents/hmm_cfr_agent.py` — `HMMCFRAgent`

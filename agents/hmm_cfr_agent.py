@@ -1,19 +1,42 @@
 """
 HMM+CFR combined agent for Truco Paulista (1v1).
 
-Uses CFR average strategy (Nash equilibrium approximation) as the base
-policy and exploits opponent behavioral state inferred by an HMM.
+Dispatch rules:
+  Opponent hasn't raised yet:
+                Passive exploit mode — HMM explicit raise/fold logic applied
+                from game start. AlwaysFold-type opponents are exploited from
+                the first hand (no cold-start delay). This is the highest-value
+                default: an opponent that folds to every raise is maximally
+                exploited before any inference is needed.
+  Opponent has raised at least once (or probe window expired):
+                HMM base strategy with CFR reserved for Bluffing exploitation.
+                HMM neutral (heuristic-style) outperforms CFR vs balanced
+                opponents (Heuristic: ~50% vs ~46%). CFR is only called when
+                Bluffing state is confidently detected (confidence >= 0.45),
+                where the Bluffing reweight (call x2.0, fold x0.5) improves
+                on HMM's simpler x2 call boost.
 
-Dispatch rules (applied only when HMM confidence >= 0.45):
-  vs Passive  : hybrid dispatch — HMM explicit raise/fold logic replaces
-                CFR sampling. CFR Nash assigns low raise probability from
-                self-play; multiplicative reweighting cannot overcome this.
-                HMM explicit logic raises at 60-90% vs Passive, matching
-                the standalone HMM's exploitation ceiling.
-  vs Bluffing : CFR base strategy with multiplicative reweight (call x2.0,
-                fold x0.5). CFR already assigns reasonable call probability
-                so the tilt is effective here.
-  vs Aggressive / low confidence : pure CFR.
+  Passive confirmation (fold-rate):
+                After the initial 3-hand window, Passive exploit continues
+                only if fold_rate >= 0.70 over at least 2 raise hands.
+                Single-fold confirmation was a false positive: Heuristic
+                folds ~25% of hands when raised, locking the agent into
+                Passive exploit vs a non-Passive opponent.
+                AlwaysFold: fold_rate=1.0 → confirmed immediately.
+                Heuristic: fold_rate≈0.25 → never confirmed → HMM neutral.
+
+Rationale for the flipped default:
+  The previous architecture defaulted to CFR and switched to Passive exploit
+  after enough FOLD observations accumulated. But FOLD observations require
+  raising, and CFR's Nash strategy raises ~15% of hands. This created a
+  feedback loop: CFR doesn't raise → AlwaysFold never folds → no FOLD
+  observations → dispatch never fires. Benchmarks showed HMM+CFR at 85%
+  vs AlwaysFold while standalone HMM achieved 96% and "always exploit"
+  reached 98.5%.
+
+  Flipping the default to Passive exploit breaks the loop. The cost vs
+  non-Passive opponents is bounded: the switch to CFR fires after the
+  opponent's first raise, typically by hand 2-5 depending on opponent type.
 """
 
 from __future__ import annotations
@@ -44,28 +67,15 @@ from agents.hmm_agent import (
 _CALL_BOOST_VS_BLUFFING: float = 2.0
 _FOLD_REDUCTION_VS_BLUFFING: float = 0.5
 
-# Passive dispatch uses the same threshold as the Bluffing reweight.
-# A single FOLD observation moves Passive belief to ~0.62, above this
-# threshold, so the dispatch fires reliably from hand 2 onward vs pure
-# Passive opponents. The small cost vs mixed opponents (e.g. Random) is
-# acceptable given the large gain vs exploitable Passive archetypes.
-_PASSIVE_DISPATCH_THRESHOLD: float = 0.45
-
 
 class HMMCFRAgent:
     """
     Combined HMM opponent-modeling + CFR strategy agent.
 
-    The CFR table is the base policy. The HMM infers opponent behavioral
-    state (Aggressive / Passive / Bluffing) from per-hand observations.
-
-    vs Passive: delegates raise/fold decisions to HMMAgent's explicit
-    threshold logic, which is calibrated to exploit passive behavior at
-    60-90% raise rates. CFR handles card play.
-
-    vs Bluffing: stays on CFR with a call-boost / fold-reduction reweight.
-
-    vs Aggressive / low confidence: pure CFR.
+    The default policy is Passive exploitation: raises aggressively from
+    game start. Once the opponent raises (demonstrating they are not
+    AlwaysFold-class), the agent permanently switches to CFR with
+    HMM-guided reweighting.
     """
 
     name: str = "HMM+CFR"
@@ -74,7 +84,7 @@ class HMMCFRAgent:
         self,
         cfr_model_path: str = "models/cfr_v8_fullbucket_2M.json.gz",
         perspective: int = 0,
-        adapt: bool = False,
+        adapt: bool = True,
     ) -> None:
         """
         Parameters
@@ -101,6 +111,20 @@ class HMMCFRAgent:
         self._we_raised: bool = False
         self._prev_score: Optional[List[int]] = None
         self._prev_bet: int = 1
+        # Set permanently to True the first time OBS_RAISE_WIN or
+        # OBS_RAISE_LOSS is observed. Triggers switch from Passive exploit
+        # to CFR dispatch.
+        self._opp_has_raised: bool = False
+        # Fold-rate tracking for Passive confirmation. A single OBS_FOLD is
+        # unreliable (Heuristic folds ~25% of hands when raised). We require
+        # fold_rate >= _PASSIVE_FOLD_RATE_THRESHOLD over at least
+        # _PASSIVE_MIN_RAISE_HANDS to confirm a Passive archetype.
+        # AlwaysFold: fold_rate=1.0 → confirmed after 2 hands.
+        # Heuristic: fold_rate≈0.25 → never confirmed → switches to CFR.
+        self._raise_hands: int = 0   # hands in which we raised
+        self._fold_hands: int = 0    # OBS_FOLD outcomes (opponent folded our raise)
+        # Number of completed hands in the current game.
+        self._hands_played: int = 0
 
     # ------------------------------------------------------------------
     # Reset
@@ -111,6 +135,10 @@ class HMMCFRAgent:
         self._model.reset()
         self._reset_hand_tracking()
         self._prev_score = None
+        self._opp_has_raised = False
+        self._raise_hands = 0
+        self._fold_hands = 0
+        self._hands_played = 0
 
     def _reset_hand_tracking(self) -> None:
         self._opponent_raised = False
@@ -172,14 +200,19 @@ class HMMCFRAgent:
     # Action selection paths
     # ------------------------------------------------------------------
 
-    def _act_passive_exploit(
-        self, state: Dict[str, Any], info: Dict[str, Any]
+    def _act_hmm(
+        self,
+        state: Dict[str, Any],
+        info: Dict[str, Any],
+        opp_state: int,
+        exploiting: bool,
     ) -> int:
         """
-        Full HMM explicit exploitation vs Passive opponent.
-        Delegates raise/fold/card decisions to HMMAgent's helper methods,
-        which are calibrated to exploit Passive behavior aggressively.
-        CFR is bypassed entirely for this decision.
+        HMM action selection for a given opponent state and exploiting flag.
+        Delegates to HMMAgent's action helpers, bypassing CFR entirely.
+        Used both for Passive exploit (opp_state=STATE_PASSIVE, exploiting=True)
+        and for neutral/Aggressive fallback (where HMM neutral outperforms CFR
+        against balanced opponents like Heuristic).
         """
         legal_actions: List[int] = info["legal_actions"]
         hand: List[str] = state.get("hand", [])
@@ -193,12 +226,12 @@ class HMMCFRAgent:
         if is_bet_decision:
             return self._hmm_delegate._bet_response(
                 legal_actions, state, num_strong, num_manilha, max_str,
-                STATE_PASSIVE, True,
+                opp_state, exploiting,
             )
 
         if 3 in legal_actions:
             raise_action = self._hmm_delegate._maybe_raise(
-                num_strong, num_manilha, STATE_PASSIVE, True,
+                num_strong, num_manilha, opp_state, exploiting,
             )
             if raise_action is not None:
                 return raise_action
@@ -271,22 +304,64 @@ class HMMCFRAgent:
         if len(legal_actions) == 1:
             return legal_actions[0]
 
+        # Fold-rate thresholds for Passive archetype confirmation.
+        # AlwaysFold fold_rate=1.0 → confirmed after _MIN_RAISE_HANDS.
+        # Heuristic fold_rate≈0.25 → never confirmed → exits to CFR.
+        _PASSIVE_EXPLOIT_WINDOW = 3
+        _PASSIVE_MIN_RAISE_HANDS = 2
+        _PASSIVE_FOLD_RATE_THRESHOLD = 0.70
+
         # Detect hand boundaries and update HMM belief.
         obs = self._detect_hand_end(state, info)
         if obs is not None:
+            self._hands_played += 1
+            if obs in (OBS_RAISE_WIN, OBS_RAISE_LOSS):
+                self._opp_has_raised = True
+            if self._we_raised:
+                self._raise_hands += 1
+                if obs == OBS_FOLD:
+                    self._fold_hands += 1
             self._model.update(obs)
             self._reset_hand_tracking()
 
         # Track opponent behavior within the current hand.
         self._track_opponent_action(state, info)
 
+        # Passive confirmation via fold-rate (requires _MIN_RAISE_HANDS raise
+        # hands with fold_rate >= threshold). Single-fold confirmation was a
+        # false positive: Heuristic folds ~25% of hands when raised, which
+        # was incorrectly locking the agent into Passive exploit mode.
+        passive_confirmed = (
+            self._raise_hands >= _PASSIVE_MIN_RAISE_HANDS
+            and (self._fold_hands / self._raise_hands) >= _PASSIVE_FOLD_RATE_THRESHOLD
+        )
+
+        # Passive exploit conditions:
+        # - Opponent hasn't raised (this hand or previously)
+        # - AND: either within the initial window (first 3 hands) where we
+        #   probe aggressively to generate fold-rate evidence, or fold-rate
+        #   has confirmed a genuine Passive archetype.
+        use_passive_exploit = (
+            not self._opp_has_raised
+            and not self._opponent_raised
+            and (self._hands_played < _PASSIVE_EXPLOIT_WINDOW or passive_confirmed)
+        )
+
         opp_state, confidence = self._model.dominant_state()
         exploiting = confidence >= CONFIDENCE_THRESHOLD
 
-        if opp_state == STATE_PASSIVE and confidence >= _PASSIVE_DISPATCH_THRESHOLD:
-            action = self._act_passive_exploit(state, info)
-        else:
+        if use_passive_exploit:
+            # Probe or confirmed Passive: raise aggressively via HMM Passive mode.
+            action = self._act_hmm(state, info, STATE_PASSIVE, True)
+        elif opp_state == STATE_BLUFFING and exploiting:
+            # CFR with Bluffing reweight outperforms HMM's simple x2 call boost
+            # because it integrates the reweight into the full strategy distribution.
             action = self._act_cfr(state, info, opp_state, exploiting)
+        else:
+            # HMM neutral (Aggressive or low confidence): heuristic-style play.
+            # HMM neutral outperforms CFR Nash vs balanced opponents (Heuristic:
+            # ~50% vs ~46%), and handles Passive residual if misclassified.
+            action = self._act_hmm(state, info, opp_state, exploiting)
 
         if action == 3:
             self._we_raised = True
