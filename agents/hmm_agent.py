@@ -95,16 +95,19 @@ class HMMModel:
         ])
 
         # Emission matrix B[s][o] = P(observation_o | state_s).
-        # Calibrated from 2000-game tournaments against known agents.
+        # Calibrated from 2000-game tournaments against known agents:
+        #   Aggressive: vs HeuristicAgent
+        #   Passive:    vs AlwaysFoldAgent
+        #   Bluffing:   vs RandomAgent
         # Rows maintain clear separation on the key distinguishing signals:
         # - Aggressive: moderate FOLD (they do fold weak hands), near-zero
         #   R_LOSS (disciplined — only raise with real cards)
-        # - Passive: high FOLD, very low raise frequency
+        # - Passive: high FOLD, zero raise frequency (R_* floored at 0.02)
         # - Bluffing: low FOLD, high raise frequency, high R_LOSS
         #              FOLD   P_LOSS  P_WIN  R_WIN  R_LOSS
         self.emission = np.array([
             [0.20, 0.27, 0.30, 0.20, 0.03],  # Aggressive
-            [0.40, 0.25, 0.20, 0.10, 0.05],  # Passive
+            [0.46, 0.23, 0.27, 0.02, 0.02],  # Passive
             [0.08, 0.15, 0.12, 0.35, 0.30],  # Bluffing
         ])
 
@@ -223,6 +226,10 @@ class HMMAgent:
         # Per-hand tracking.
         self._opponent_raised = False
         self._we_raised = False
+        # Bet level captured the moment we last chose to raise. Used to
+        # discriminate a true fold (delta == _bet_when_we_raised) from an
+        # accepted raise we then won (delta > _bet_when_we_raised).
+        self._bet_when_we_raised: int = 0
         self._prev_score: Optional[List[int]] = None
         self._prev_bet: int = 1
 
@@ -235,6 +242,7 @@ class HMMAgent:
     def _reset_hand_tracking(self) -> None:
         self._opponent_raised = False
         self._we_raised = False
+        self._bet_when_we_raised = 0
         self._prev_bet = 1
 
     def _hand_quality(
@@ -310,10 +318,15 @@ class HMMAgent:
         # A hand ended. Determine observation.
         self._prev_score = list(current_score)
 
-        # Detect fold: we gained points and we had raised (opponent folded
-        # to our raise). Played cards will be sparse but we can't reliably
-        # count them from the View, so use the raise tracking.
-        opponent_folded = my_score_delta > 0 and self._we_raised and not self._opponent_raised
+        # Detect fold: we gained points after raising, opponent never
+        # re-raised, and the payout equals the pre-raise stake (so they
+        # refused rather than accepted and then lost the hand).
+        opponent_folded = (
+            my_score_delta > 0
+            and self._we_raised
+            and not self._opponent_raised
+            and my_score_delta <= self._bet_when_we_raised
+        )
         opp_won = opp_score_delta > 0
 
         if opponent_folded:
@@ -394,6 +407,7 @@ class HMMAgent:
             )
             if action == 3:
                 self._we_raised = True
+                self._bet_when_we_raised = state.get("current_bet_value", 1)
             return action
 
         # --- Proactive raise ---
@@ -403,6 +417,7 @@ class HMMAgent:
             )
             if raise_action is not None:
                 self._we_raised = True
+                self._bet_when_we_raised = state.get("current_bet_value", 1)
                 return raise_action
 
         # --- Card play ---

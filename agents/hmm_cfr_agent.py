@@ -109,6 +109,13 @@ class HMMCFRAgent:
         # Per-hand tracking.
         self._opponent_raised: bool = False
         self._we_raised: bool = False
+        # Bet level captured at the moment we last chose to raise. A true
+        # fold pays out the pre-raise stake (delta == _bet_when_we_raised);
+        # an accepted raise we then win pays out the new stake
+        # (delta > _bet_when_we_raised). Used to disambiguate OBS_FOLD from
+        # accept+win, which both satisfy the legacy "we raised, won, opp
+        # didn't re-raise" pattern.
+        self._bet_when_we_raised: int = 0
         self._prev_score: Optional[List[int]] = None
         self._prev_bet: int = 1
         # Set permanently to True the first time OBS_RAISE_WIN or
@@ -143,6 +150,7 @@ class HMMCFRAgent:
     def _reset_hand_tracking(self) -> None:
         self._opponent_raised = False
         self._we_raised = False
+        self._bet_when_we_raised = 0
         self._prev_bet = 1
 
     # ------------------------------------------------------------------
@@ -172,8 +180,16 @@ class HMMCFRAgent:
 
         self._prev_score = list(current_score)
 
+        # Disambiguate true fold from accept+win: both satisfy "we raised,
+        # we gained points, opponent did not re-raise". A true fold pays the
+        # pre-raise stake, so my_score_delta == _bet_when_we_raised. An
+        # accepted raise we then won pays the post-raise stake, so
+        # my_score_delta > _bet_when_we_raised.
         opponent_folded = (
-            my_score_delta > 0 and self._we_raised and not self._opponent_raised
+            my_score_delta > 0
+            and self._we_raised
+            and not self._opponent_raised
+            and my_score_delta <= self._bet_when_we_raised
         )
         opp_won = opp_score_delta > 0
 
@@ -365,4 +381,5 @@ class HMMCFRAgent:
 
         if action == 3:
             self._we_raised = True
+            self._bet_when_we_raised = state.get("current_bet_value", 1)
         return action

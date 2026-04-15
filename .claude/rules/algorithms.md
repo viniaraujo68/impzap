@@ -87,14 +87,16 @@ Standalone opponent-modeling agent that infers behavioral state and exploits det
 4. **Transition matrix fixed**: not adapted — requires unobservable state transitions to estimate; noisy updates degrade belief tracking.
 Benchmarked at 5000 games: neutral vs all fixed archetypes (all deltas within 1 std dev). Intended benefit is against mixed/unknown opponents that don't match any calibrated archetype.
 
-**Benchmark results** (5000 games, vs Heuristic baseline):
+**Benchmark results** (5000 games, post OBS_FOLD fix + Passive row recalibration):
 
-| Opponent | HMM | Heuristic | Diff |
-|---|---|---|---|
-| AlwaysFold | 89.7% | 77.5% | **+12.2%** |
-| Heuristic | 51.6% | 49.5% | **+2.1%** |
-| AlwaysRaise | 73.5% | 74.9% | -1.4% |
-| Random | 86.1% | 88.4% | -2.2% |
+| Opponent | HMM | Diff vs Heuristic baseline |
+|---|---|---|
+| AlwaysFold | 97.6% | **+20.1%** |
+| Heuristic | 49.0% | -0.5% (noise) |
+| AlwaysRaise | 68.5% | -6.4% |
+| Random | 88.4% | 0.0% |
+
+Note: the standalone HMM drops ~2.2pp vs Heuristic compared to the old numbers because the recalibrated Passive row (FOLD=0.46, R_*=0.02) is crisper and pulls belief harder when a mixed opponent generates any fold signal. HMM+CFR's fold-rate confirmation gate absorbs this regression.
 
 **Key findings**:
 - HMM excels against exploitable opponents (Passive: +12.2%)
@@ -124,15 +126,22 @@ Hybrid agent: HMM opponent modeling + CFR strategy, with dispatch redesigned to 
 **Rationale for HMM as post-probe default (not CFR)**:
 CFR Nash strategy averages 46.1% vs HeuristicAgent. HMM neutral (heuristic fallback) averages 51.2%. Nash does not maximize win-rate against fixed non-Nash opponents. Using CFR as the default post-probe degraded Heuristic performance to 45.1% (worse than both baselines). Switching to HMM as the default recovers the advantage.
 
-**Benchmark results** (5000 games):
+**Benchmark results** (5000 games, post OBS_FOLD fix + Passive row recalibration):
 
 | Opponent | HMM+CFR | HMM | CFR |
 |---|---|---|---|
-| AlwaysFold | **97.1%** | 95.9% | 61.6% |
-| Heuristic | **50.8%** | 51.2% | 46.1% |
-| Random | 85.3% | 87.0% | 88.6% |
-| AlwaysRaise | ~71% | 68.0% | 76.2% |
+| AlwaysFold | **98.5%** | 97.6% | 61.6% |
+| Heuristic | **50.8%** | 49.0% | 46.8% |
+| Random | 86.6% | 88.4% | 87.9% |
+| AlwaysRaise | 71.4% | 68.5% | 76.2% |
 
-HMM+CFR dominates both baselines vs AlwaysFold and matches HMM vs Heuristic. Small regression vs Random and AlwaysRaise (CFR is better there, but these are less important matchups).
+HMM+CFR dominates both baselines vs AlwaysFold and is tied with HMM vs Heuristic. The previous OBS_FOLD confusion (accept+win misclassified as fold) inflated FOLD observations and polluted fold-rate tracking; fixing it and recalibrating the Passive row from AlwaysFold yields a clean +1.4pp gain on the Passive archetype without moving the Heuristic target.
+
+**CONFIDENCE_THRESHOLD tuning** (2000 games each, threshold=0.35/0.40/0.45):
+- 0.35: Random 86.8 / Heur 49.8 / AlwaysRaise 71.5 (regresses Random and Heuristic)
+- 0.40: Random 87.9 / Heur 50.0 / AlwaysRaise 71.7 (small Random gain, small Heuristic cost)
+- 0.45: Random 86.9 / Heur 50.7 / AlwaysRaise 71.2 (keeps Heuristic best)
+
+All deltas within 1 std dev; 0.45 retained as the default because it maximizes the main Heuristic matchup without material cost elsewhere.
 
 **Implementation**: `agents/hmm_cfr_agent.py` — `HMMCFRAgent`
