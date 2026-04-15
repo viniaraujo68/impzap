@@ -106,9 +106,9 @@ class HMMModel:
         # - Bluffing: low FOLD, high raise frequency, high R_LOSS
         #              FOLD   P_LOSS  P_WIN  R_WIN  R_LOSS
         self.emission = np.array([
-            [0.20, 0.27, 0.30, 0.20, 0.03],  # Aggressive
+            [0.22, 0.26, 0.29, 0.21, 0.02],  # Aggressive
             [0.46, 0.23, 0.27, 0.02, 0.02],  # Passive
-            [0.08, 0.15, 0.12, 0.35, 0.30],  # Bluffing
+            [0.10, 0.31, 0.15, 0.33, 0.11],  # Bluffing
         ])
 
         # Fixed calibrated prior — emission rows are regularized toward this.
