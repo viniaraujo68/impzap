@@ -268,7 +268,7 @@ class HMMCFRAgent:
         hand_strengths = _get_hand_strengths_view(state)
         _, a2r, abstract_actions = _build_action_maps(legal_actions, hand_strengths)
 
-        info_key = CFRAgent._info_set_key_from_view(state, info)
+        info_key = self._cfr._info_set_key_from_view(state, info)
         strategy = self._cfr._get_average_strategy(info_key, abstract_actions)
 
         if exploiting and opp_state == STATE_BLUFFING:

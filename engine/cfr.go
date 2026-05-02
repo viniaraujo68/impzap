@@ -64,6 +64,24 @@ func cfrCardStrength(card Card, vira Card) int {
 	return card.Rank.Index()
 }
 
+// cfrScoreDeltaBucket maps (my_score - opp_score) to 5 buckets.
+// 0=far behind(delta<=-7), 1=behind(-6..-2), 2=even(-1..1), 3=ahead(2..6), 4=far ahead(>=7).
+func cfrScoreDeltaBucket(delta int) int {
+	if delta <= -7 {
+		return 0
+	}
+	if delta <= -2 {
+		return 1
+	}
+	if delta <= 1 {
+		return 2
+	}
+	if delta <= 6 {
+		return 3
+	}
+	return 4
+}
+
 // cfrStrengthBucket maps card strength to 8 buckets.
 // -1=facedown, 0=weak trash(0-1: 4,5), 1=strong trash(2-3: 6,7),
 // 2=low(4-5: Q,J), 3=mid(6: K), 4=mid-high(7: A),
@@ -206,9 +224,15 @@ func cfrInfoSetKey(s *GameState, player int) string {
 		roundHistoryParts = append(roundHistoryParts, fmt.Sprintf("(%d, %d)", outcome, oppCoarse))
 	}
 
-	return fmt.Sprintf("(%s, %d, %d, %s, %d, %d)",
+	scoreDeltaBucket := cfrScoreDeltaBucket(s.Score[player] - s.Score[1-player])
+	maoDeOnze := 0
+	if s.WaitingForMaoDeOnze {
+		maoDeOnze = 1
+	}
+	return fmt.Sprintf("(%s, %d, %d, %s, %d, %d, %d, %d)",
 		tupleStr(handBuckets), myTableBucket, oppTableBucket,
-		cfrFormatRoundHistory(roundHistoryParts), s.CurrentBet, s.PendingBet)
+		cfrFormatRoundHistory(roundHistoryParts), s.CurrentBet, s.PendingBet,
+		scoreDeltaBucket, maoDeOnze)
 }
 
 // ---------------------------------------------------------------------------
@@ -474,6 +498,24 @@ func (t *CFRTables) cfrTraverse(
 	}
 }
 
+// createGameWithRandomScore creates a fresh hand starting at a uniformly random
+// score so that CFR sees all score_delta_bucket values during training.
+// When exactly one player is at 11, WaitingForMaoDeOnze is set appropriately.
+func createGameWithRandomScore() *GameState {
+	gs := createNewGame()
+	gs.Score[0] = rand.Intn(12) // 0-11
+	gs.Score[1] = rand.Intn(12) // 0-11
+	if gs.Score[0] == 11 && gs.Score[1] < 11 {
+		gs.WaitingForMaoDeOnze = true
+		gs.CurrentPlayer = 0
+	} else if gs.Score[1] == 11 && gs.Score[0] < 11 {
+		gs.WaitingForMaoDeOnze = true
+		gs.CurrentPlayer = 1
+	}
+	gs.updateLegalActions()
+	return gs
+}
+
 // ---------------------------------------------------------------------------
 // Training
 // ---------------------------------------------------------------------------
@@ -486,14 +528,14 @@ func (t *CFRTables) train(numIterations int) {
 	startTime := time.Now()
 
 	for i := 1; i <= numIterations; i++ {
-		gs := createNewGame()
+		gs := createGameWithRandomScore()
 
 		// Traverse as player 0, then as player 1.
 		t.cfrTraverse(gs, 0, 1.0, 1.0)
 
 		// Fresh game with same deal for player 1 traversal.
 		// Reset rewards since traversal may have modified them.
-		gs2 := createNewGame()
+		gs2 := createGameWithRandomScore()
 		t.cfrTraverse(gs2, 1, 1.0, 1.0)
 
 		t.Iterations++

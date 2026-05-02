@@ -74,6 +74,19 @@ def _strength_bucket(strength: int) -> int:
 
 
 
+def _score_delta_bucket(delta: int) -> int:
+    """Map (my_score - opp_score) to 5 buckets: 0=far behind, 1=behind, 2=even, 3=ahead, 4=far ahead."""
+    if delta <= -7:
+        return 0
+    if delta <= -2:
+        return 1
+    if delta <= 1:
+        return 2
+    if delta <= 6:
+        return 3
+    return 4
+
+
 def _build_action_maps(
     legal_actions: List[int],
     hand_strengths: List[int],
@@ -162,6 +175,7 @@ class CFRAgent:
         self.regret_sum: Dict[str, Dict[int, float]] = {}
         self.strategy_sum: Dict[str, Dict[int, float]] = {}
         self._iterations: int = 0
+        self._use_score_features: bool = True
 
     # ------------------------------------------------------------------
     # Strategy computation
@@ -262,6 +276,10 @@ class CFRAgent:
         current_bet = state.get("current_bet_value", 1)
         pending_bet = state.get("pending_bet", 0)
 
+        score = state.get("score", [0, 0])
+        score_delta_bucket = _score_delta_bucket(score[player] - score[1 - player])
+        mao_de_onze = 1 if state.get("waiting_for_mao_de_onze", False) else 0
+
         info_tuple = (
             tuple(hand_buckets),
             my_table_bucket,
@@ -269,6 +287,8 @@ class CFRAgent:
             tuple(round_history),
             current_bet,
             pending_bet,
+            score_delta_bucket,
+            mao_de_onze,
         )
         return str(info_tuple)
 
@@ -277,8 +297,21 @@ class CFRAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _count_key_elements(key: str) -> int:
+        """Count top-level tuple elements in a key string to detect key version."""
+        depth = 0
+        count = 1
+        for c in key:
+            if c in "([":
+                depth += 1
+            elif c in ")]":
+                depth -= 1
+            elif c == "," and depth == 1:
+                count += 1
+        return count
+
     def _info_set_key_from_view(
-        state: Dict[str, Any], info: Dict[str, Any]
+        self, state: Dict[str, Any], info: Dict[str, Any]
     ) -> str:
         """
         Build an info set key from a View state (play time).
@@ -349,14 +382,29 @@ class CFRAgent:
                     pending_bet = _BET_LADDER[i + 1]
                     break
 
-        info_tuple = (
-            tuple(hand_buckets),
-            my_table_bucket,
-            opp_table_bucket,
-            tuple(round_history),
-            current_bet,
-            pending_bet,
-        )
+        if self._use_score_features:
+            score = state.get("score", [0, 0])
+            score_delta_bucket = _score_delta_bucket(score[me] - score[1 - me])
+            mao_de_onze = 1 if waiting_mao else 0
+            info_tuple = (
+                tuple(hand_buckets),
+                my_table_bucket,
+                opp_table_bucket,
+                tuple(round_history),
+                current_bet,
+                pending_bet,
+                score_delta_bucket,
+                mao_de_onze,
+            )
+        else:
+            info_tuple = (
+                tuple(hand_buckets),
+                my_table_bucket,
+                opp_table_bucket,
+                tuple(round_history),
+                current_bet,
+                pending_bet,
+            )
         return str(info_tuple)
 
     # ------------------------------------------------------------------
@@ -595,3 +643,7 @@ class CFRAgent:
         self.strategy_sum = {}
         for key, actions in data.get("strategy_sum", {}).items():
             self.strategy_sum[key] = {int(a): v for a, v in actions.items()}
+
+        sample_keys = list(self.strategy_sum.keys()) or list(self.regret_sum.keys())
+        if sample_keys:
+            self._use_score_features = self._count_key_elements(sample_keys[0]) >= 8

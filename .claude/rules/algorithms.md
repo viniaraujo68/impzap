@@ -28,34 +28,55 @@ External Sampling CFR with Go-native traversal for high-performance training.
 - **CGO exports** in `engine/cfr_exports.go`: `CFRTrain`, `CFRSave`, `CFRLoad`
 - **Python agent** in `agents/cfr_agent.py`: `act()` uses average strategy at play time, loads gzip JSON from Go training
 - **Training script**: `train_cfr.py` — calls Go CFR via ctypes
-- **Info set key** (v8): `(hand_sorted, my_table_bucket, opp_table_bucket, round_history, current_bet, pending_bet)`
+- **Info set key** (v9, current): `(hand_sorted, my_table_bucket, opp_table_bucket, round_history, current_bet, pending_bet, score_delta_bucket, mao_de_onze)`
 - `hand_sorted`: sorted 8-bucket strengths of remaining hand cards
 - `my_table_bucket` / `opp_table_bucket`: ordered table (distinguishes who played which card this round; -1 if not played)
-- `round_history`: tuple of `(outcome, opp_bucket)` per completed round. `outcome`: 0=I_won, 1=opp_won, 2=tie. `opp_bucket`: full 8-bucket value of opp's face-up card (-1 if facedown). This is the key structural improvement over v4: explicit round outcomes + per-round opp card history.
+- `round_history`: tuple of `(outcome, opp_bucket)` per completed round. `outcome`: 0=I_won, 1=opp_won, 2=tie. `opp_bucket`: full 8-bucket value of opp's face-up card (-1 if facedown).
+- `score_delta_bucket`: 5 buckets mapping `my_score - opp_score` → 0=far behind(≤-7), 1=behind(-6..-2), 2=even(-1..1), 3=ahead(2..6), 4=far ahead(≥7)
+- `mao_de_onze`: 1 if WaitingForMaoDeOnze else 0
 - **8 strength buckets**: weak-trash(0-1), strong-trash(2-3), low(4-5), mid(6:K), mid-high(7:A), high(8:2), top(9:3), manilha(10+)
 - **Action abstraction**: rank-ordered play actions (abstract 0=weakest, 2=strongest)
 - **Regret pruning**: skip actions with cumulative regret below -300.0
 - **Storage**: gzip-compressed JSON with string action keys (Python-compatible)
-- **Training**: self-play only, ~6 min for 2M iterations (Go-native)
+- **Training**: self-play with randomized starting scores (uniform random over [0,11]×[0,11]) — required so CFR sees all score_delta_bucket values during training. Training from (0,0) only causes key mismatch at play time since all trained keys carry bucket=2 (even).
+- **Key version auto-detection**: `CFRAgent` detects key version on load by counting top-level tuple elements (6=v8, 8=v9) and sets `_use_score_features` accordingly. Old v8 models remain fully playable.
+- **Training speed**: ~22 min for 6M iterations (Go-native, 423K info sets)
+
+**Why v8 key was limited**:
+- No score state: all training hands start from (0,0) → CFR never encounters varied scoreboard context → score-agnostic strategy
+- Crossing 50% vs Heuristic required score-aware strategy decisions (raise more aggressively when behind, protect lead when ahead)
+
+**v9 convergence results** (423K info sets, ~28 visits/set at 6M iters):
+- 50.1% vs Heuristic (+4.6pp vs v8@2M) — first pure CFR model to exceed 50% vs Heuristic
+- 61.3% vs MCTS (+3pp vs v8@2M, 300-game sample ±5.6pp)
+- 75.2% vs REINFORCE (+~0pp vs v8, within noise)
+- v9@6M vs v8@2M head-to-head: ~50% (Nash approximations of comparable quality; score features improve absolute benchmarks but neither dominates the other strategically)
+- Info set growth: 84K (v8) → 423K (v9, ~5x, matching expected 5 score buckets × 84K)
+
+**v8 key info** (preserved for reference):
+`(hand_sorted, my_table_bucket, opp_table_bucket, round_history, current_bet, pending_bet)`
+
+**v8 convergence results** (84K info sets, ~47 visits/set at 2M iters):
+- 89.3% vs Random
+- 45.5–48.5% vs Heuristic
+- 58.3% vs MCTS (300-game sample)
+- Beats v4@11M in head-to-head: 87.5%
+- 24x fewer info sets, 5.5x fewer training iterations than v4@11M
 
 **Why v4 key was limited**:
 - `played_buckets` (flat list of all played cards) had no explicit round-winner encoding — CFR had to infer round context from card positions, which it couldn't reliably
 - `table_buckets` was sorted, losing the distinction between "I'm winning this round" vs "I'm losing this round"
 - Both players' cards were in the flat list, inflating info sets without proportional gain
 
-**v8 convergence results** (84K info sets, 23 visits/set at 2M iters):
-- 89.3% vs Random (+1.9 pp vs v4@11M)
-- 46.7–48.5% vs Heuristic (on par with v4@11M, within noise)
-- 55.0% vs MCTS (+3 pp vs v4@11M)
-- Beats v4@11M in head-to-head: 87.5%
-- 24x fewer info sets, 5.5x fewer training iterations than v4@11M
-
 **Version history** (models are gitignored, stored locally in `models/`):
-- `cfr_v3_5buck_1M.json.gz` — 5 buckets, 1M iters, 183k info sets
-- `cfr_v3_5buck_6M.json.gz` — 5 buckets, 6M iters, 184k info sets (converged, no improvement over 1M)
-- `cfr_v4_8buck_1M.json.gz` — 8 buckets, 1M iters, 1.97M info sets
-- `cfr_v4_8buck_11M.json.gz` — 8 buckets, 11M iters, 2.05M info sets (converged)
-- `cfr_v8_fullbucket_2M.json.gz` — v8 key (round history), 2M iters, 84K info sets (**current**)
+- `cfr_v3_5buck_1M.json.gz` — 5 card-strength buckets, 1M iters, 183k info sets
+- `cfr_v3_5buck_6M.json.gz` — 5 card-strength buckets, 6M iters, 184k info sets (converged, no improvement over 1M)
+- `cfr_v4_8buck_1M.json.gz` — 8 card-strength buckets, 1M iters, 1.97M info sets
+- `cfr_v4_8buck_11M.json.gz` — 8 card-strength buckets, 11M iters, 2.05M info sets (converged)
+- `cfr_v8_fullbucket_2M.json.gz` — v8 key (round history), 2M iters, 84K info sets
+- `cfr_v8_fullbucket_5M.json.gz` — v8 key, 5M iters, 84K info sets (confirms convergence at 2M; no improvement)
+- `cfr_v9_scorehand_3M.json.gz` — v9 key (score delta + mao de onze), 3M iters, 423K info sets
+- `cfr_v9_scorehand_6M.json.gz` — v9 key, 6M iters, 423K info sets (**current**)
 
 ## HMM (Hidden Markov Model)
 Standalone opponent-modeling agent that infers behavioral state and exploits detected tendencies.
@@ -124,7 +145,7 @@ Hybrid agent: HMM opponent modeling + CFR strategy, with dispatch redesigned to 
 - Heuristic: fold_rate≈0.25 → not confirmed → exits to HMM neutral post-window.
 
 **Rationale for HMM as post-probe default (not CFR)**:
-CFR Nash strategy averages 46.1% vs HeuristicAgent. HMM neutral (heuristic fallback) averages 51.2%. Nash does not maximize win-rate against fixed non-Nash opponents. Using CFR as the default post-probe degraded Heuristic performance to 45.1% (worse than both baselines). Switching to HMM as the default recovers the advantage.
+CFR Nash strategy averages ~46–50% vs HeuristicAgent (46.4% for v8, 50.1% for v9@6M). HMM neutral (heuristic fallback) averages 51.2%. Nash does not maximize win-rate against fixed non-Nash opponents. Using CFR as the default post-probe degraded Heuristic performance to 45.1% (worse than both baselines). Switching to HMM as the default recovers the advantage. Note: this tradeoff may shift as v9 CFR closes in on 50% vs Heuristic — worth re-evaluating dispatch logic against v9.
 
 **Benchmark results** (5000 games for full benchmark; 1000 games for archetypes):
 

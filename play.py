@@ -184,7 +184,7 @@ def main() -> None:
     env = TrucoVectorObservation(base_env)
 
     cfr = CFRAgent()
-    cfr.load("models/cfr_v8_fullbucket_2M.json.gz")
+    cfr.load("models/cfr_v9_scorehand_6M.json.gz")
 
     random_agent = RandomAgent()
     heuristic = HeuristicAgent()
