@@ -21,6 +21,7 @@ wheels/
 .installed.cfg
 *.egg
 models/
+slides/figures/out/
 
 # Virtual Environments
 .env

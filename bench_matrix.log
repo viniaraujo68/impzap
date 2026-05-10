@@ -1,0 +1,57 @@
+
+=== Head-to-Head Matrix ===
+
+  Heuristic vs REINFORCE: 1174/5000 (23.5%) vs 3826 ties=0 | 84.8s
+  Heuristic vs MCTS: 252/500 (50.4%) vs 248 ties=0 | 597.1s
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  Heuristic vs CFR: 2526/5000 (50.5%) vs 2474 ties=0 | 18.2s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+  Heuristic vs HMM+CFR: 2403/5000 (48.1%) vs 2597 ties=0 | 10.8s
+  REINFORCE vs MCTS: 191/500 (38.2%) vs 309 ties=0 | 302.3s
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  REINFORCE vs CFR: 1269/5000 (25.4%) vs 3731 ties=0 | 69.4s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+  REINFORCE vs HMM+CFR: 2263/5000 (45.3%) vs 2737 ties=0 | 65.8s
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  MCTS vs CFR: 202/500 (40.4%) vs 298 ties=0 | 821.1s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+  MCTS vs HMM+CFR: 251/500 (50.2%) vs 249 ties=0 | 615.4s
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  CFR vs HMM+CFR: 2646/5000 (52.9%) vs 2354 ties=0 | 21.4s
+
+Total benchmark time: 43.5 min
+
+### Markdown matrix (row vs column win rate)
+
+| | Heuristic | REINFORCE | MCTS | CFR | HMM+CFR |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **Heuristic** | — | 23.5% | 50.4% | 50.5% | 48.1% |
+| **REINFORCE** | 76.5% | — | 38.2% | 25.4% | 45.3% |
+| **MCTS** | 49.6% | 61.8% | — | 40.4% | 50.2% |
+| **CFR** | 49.5% | 74.6% | 59.6% | — | 52.9% |
+| **HMM+CFR** | 51.9% | 54.7% | 49.8% | 47.1% | — |
+
+### LaTeX tabular
+
+\begin{tabular}{lccccc}
+\toprule
+& Heuristic & REINFORCE & MCTS & CFR & HMM+CFR \\
+\midrule
+Heuristic & --- & 23.5\% & 50.4\% & 50.5\% & 48.1\% \\
+REINFORCE & 76.5\% & --- & 38.2\% & 25.4\% & 45.3\% \\
+MCTS & 49.6\% & 61.8\% & --- & 40.4\% & 50.2\% \\
+CFR & 49.5\% & 74.6\% & 59.6\% & --- & 52.9\% \\
+HMM+CFR & 51.9\% & 54.7\% & 49.8\% & 47.1\% & --- \\
+\bottomrule
+\end{tabular}
+
+Raw counts written to bench_matrix_results.txt

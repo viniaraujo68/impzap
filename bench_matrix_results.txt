@@ -1,0 +1,26 @@
+# Head-to-head benchmark results
+# Generated in 43.5 minutes
+# CFR model: models/cfr_v9_scorehand_6M.json.gz
+# REINFORCE model: models/reinforce.pth
+
+agent_a, agent_b, num_games, a_win_rate_pct
+Heuristic, REINFORCE, 5000, 23.48
+Heuristic, MCTS, 500, 50.40
+Heuristic, CFR, 5000, 50.52
+Heuristic, HMM+CFR, 5000, 48.06
+REINFORCE, Heuristic, 5000, 76.52
+REINFORCE, MCTS, 500, 38.20
+REINFORCE, CFR, 5000, 25.38
+REINFORCE, HMM+CFR, 5000, 45.26
+MCTS, Heuristic, 500, 49.60
+MCTS, REINFORCE, 500, 61.80
+MCTS, CFR, 500, 40.40
+MCTS, HMM+CFR, 500, 50.20
+CFR, Heuristic, 5000, 49.48
+CFR, REINFORCE, 5000, 74.62
+CFR, MCTS, 500, 59.60
+CFR, HMM+CFR, 5000, 52.92
+HMM+CFR, Heuristic, 5000, 51.94
+HMM+CFR, REINFORCE, 5000, 54.74
+HMM+CFR, MCTS, 500, 49.80
+HMM+CFR, CFR, 5000, 47.08
