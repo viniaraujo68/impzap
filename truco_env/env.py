@@ -55,6 +55,8 @@ class TrucoEnv(gym.Env):
         self._lib.CFRSave.restype = ctypes.c_void_p
         self._lib.CFRLoad.argtypes = [ctypes.c_char_p]
         self._lib.CFRLoad.restype = ctypes.c_void_p
+        self._lib.SeedEngine.argtypes = [ctypes.c_longlong]
+        self._lib.SeedEngine.restype = ctypes.c_void_p
 
         self.action_space: spaces.Discrete = spaces.Discrete(9)
         self.observation_space: spaces.Dict = spaces.Dict({})
@@ -126,6 +128,16 @@ class TrucoEnv(gym.Env):
         """Load Go CFR tables from gzip JSON file."""
         ptr = self._lib.CFRLoad(path.encode("utf-8"))
         return self._parse_and_free(ptr)
+
+    def seed_engine(self, seed: int) -> None:
+        """
+        Seed the Go engine's RNG. Affects deck shuffles in InitGame /
+        dealNewHand, the heuristic-rollout policy used by MCTS, and CFR
+        sampling. Subsequent calls re-seed; the engine RNG is otherwise
+        auto-seeded from wall-clock time at process start.
+        """
+        ptr = self._lib.SeedEngine(ctypes.c_longlong(int(seed)))
+        self._parse_and_free(ptr)
 
     def reset(
         self,

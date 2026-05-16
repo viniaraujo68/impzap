@@ -5,7 +5,6 @@ import "C"
 
 import (
 	"encoding/json"
-	"math/rand"
 )
 
 // Rollout policy identifiers passed as policyID to RolloutFromState.
@@ -38,7 +37,7 @@ func cardStrength(card Card, vira Card) int {
 
 // randomAction picks a uniformly random legal action.
 func randomAction(s *GameState) int {
-	return s.LegalActions[rand.Intn(len(s.LegalActions))]
+	return s.LegalActions[rolloutRng.Intn(len(s.LegalActions))]
 }
 
 // heuristicAction selects an action using the same policy as the Python
@@ -89,7 +88,7 @@ func heuristicAction(s *GameState) int {
 
 	for _, a := range legal {
 		if a == 3 && bestStrength >= rolloutStrongThreshold {
-			if rand.Float64() < rolloutTrucoProb {
+			if rolloutRng.Float64() < rolloutTrucoProb {
 				return 3
 			}
 			break
@@ -115,6 +114,11 @@ type rolloutResult struct {
 //
 //export RolloutFromState
 func RolloutFromState(stateJSON *C.char, policyID C.int) *C.char {
+	// Route any shuffles triggered by mid-rollout hand transitions through
+	// rolloutRng, leaving the live engineRng deal stream untouched.
+	useRolloutRng = true
+	defer func() { useRolloutRng = false }()
+
 	var s GameState
 	if err := json.Unmarshal([]byte(C.GoString(stateJSON)), &s); err != nil {
 		data, _ := json.Marshal(rolloutResult{Winner: -1})

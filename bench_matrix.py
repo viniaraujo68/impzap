@@ -10,10 +10,12 @@ tabular block, and the raw counts are saved to bench_matrix_results.txt
 so the run can be reused later without re-executing.
 """
 
+import argparse
 import time
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from truco_env.env import TrucoEnv
+from truco_env.seeding import derive_game_seed, seed_all
 from truco_env.wrappers import TrucoVectorObservation
 from agents.heuristic_agent import HeuristicAgent
 from agents.reinforce_agent import ReinforceAgent
@@ -35,8 +37,15 @@ def get_action(agent: Any, state_vector: Any, raw_state: Dict[str, Any], info: D
     return agent.act(raw_state, info)
 
 
-def play_one(env: TrucoVectorObservation, agent_p0: Any, agent_p1: Any) -> int:
+def play_one(
+    env: TrucoVectorObservation,
+    agent_p0: Any,
+    agent_p1: Any,
+    seed: Optional[int] = None,
+) -> int:
     """Return the index of the winning seat (0 or 1)."""
+    if seed is not None:
+        seed_all(env, seed)
     state_vector, info = env.reset()
     for agent in (agent_p0, agent_p1):
         if hasattr(agent, "reset"):
@@ -63,18 +72,27 @@ def head_to_head(
     num_games: int,
     label_a: str,
     label_b: str,
+    seed: Optional[int] = None,
 ) -> Tuple[int, int, float]:
-    """Run num_games with seats swapped halfway. Returns (a_wins, b_wins, elapsed)."""
+    """
+    Run num_games with seats swapped halfway. Returns (a_wins, b_wins, elapsed).
+
+    When `seed` is given, each game N is seeded with derive_game_seed(seed, N)
+    so the deal sequence is reproducible and aligned across pairings.
+    """
     half = num_games // 2
     a_wins = 0
     b_wins = 0
     start = time.time()
 
+    def _game_seed(idx: int) -> Optional[int]:
+        return derive_game_seed(seed, idx) if seed is not None else None
+
     # First half: A as P0, B as P1
     a0 = factory_a(0)
     b1 = factory_b(1)
-    for _ in range(half):
-        winner = play_one(env, a0, b1)
+    for game_idx in range(half):
+        winner = play_one(env, a0, b1, seed=_game_seed(game_idx))
         if winner == 0:
             a_wins += 1
         elif winner == 1:
@@ -83,8 +101,8 @@ def head_to_head(
     # Second half: B as P0, A as P1
     b0 = factory_b(0)
     a1 = factory_a(1)
-    for _ in range(num_games - half):
-        winner = play_one(env, b0, a1)
+    for game_idx in range(half, num_games):
+        winner = play_one(env, b0, a1, seed=_game_seed(game_idx))
         if winner == 0:
             b_wins += 1
         elif winner == 1:
@@ -100,6 +118,16 @@ def head_to_head(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Head-to-head benchmark matrix.",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Master seed. Each game N uses derive_game_seed(seed, N) so the "
+        "deal sequence is reproducible and identical across pairings.",
+    )
+    args = parser.parse_args()
+
     base_env = TrucoEnv()
     env = TrucoVectorObservation(base_env)
 
@@ -150,7 +178,8 @@ def main() -> None:
             label_b, factory_b = agents[j]
             num_games = GAMES_MCTS if "MCTS" in (label_a, label_b) else GAMES_FAST
             a_wins, b_wins, _ = head_to_head(
-                env, factory_a, factory_b, num_games, label_a, label_b
+                env, factory_a, factory_b, num_games, label_a, label_b,
+                seed=args.seed,
             )
             rate_a = a_wins / num_games * 100
             rate_b = b_wins / num_games * 100

@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"sort"
 	"strings"
@@ -471,7 +470,7 @@ func (t *CFRTables) cfrTraverse(
 		}
 
 		// Sample action from strategy.
-		r := rand.Float64()
+		r := engineRng.Float64()
 		cumulative := 0.0
 		chosenAbs := abstractActions[len(abstractActions)-1]
 		for _, a := range abstractActions {
@@ -503,8 +502,8 @@ func (t *CFRTables) cfrTraverse(
 // When exactly one player is at 11, WaitingForMaoDeOnze is set appropriately.
 func createGameWithRandomScore() *GameState {
 	gs := createNewGame()
-	gs.Score[0] = rand.Intn(12) // 0-11
-	gs.Score[1] = rand.Intn(12) // 0-11
+	gs.Score[0] = engineRng.Intn(12) // 0-11
+	gs.Score[1] = engineRng.Intn(12) // 0-11
 	if gs.Score[0] == 11 && gs.Score[1] < 11 {
 		gs.WaitingForMaoDeOnze = true
 		gs.CurrentPlayer = 0

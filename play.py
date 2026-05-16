@@ -1,7 +1,9 @@
+import argparse
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from truco_env.env import TrucoEnv
+from truco_env.seeding import derive_game_seed, seed_all
 from truco_env.wrappers import TrucoVectorObservation
 from agents.heuristic_agent import HeuristicAgent
 from agents.random_agent import RandomAgent
@@ -57,8 +59,16 @@ def play_verbose_match(
     env: TrucoVectorObservation,
     agent_p0: Any,
     agent_p1: Any,
+    seed: Optional[int] = None,
 ) -> None:
-    """Play one game and print every action to stdout."""
+    """
+    Play one game and print every action to stdout.
+
+    If `seed` is given, every RNG source (Go engine, random, numpy, torch)
+    is seeded before reset so the game is reproducible.
+    """
+    if seed is not None:
+        seed_all(env, seed)
     state_vector, info = env.reset()
     terminated = False
     truncated = False
@@ -122,9 +132,15 @@ def simulate_tournament(
     agent_p0: Any,
     agent_p1: Any,
     num_games: int = 1000,
+    seed: Optional[int] = None,
 ) -> Tuple[int, int]:
     """
     Run num_games silent matches and print a summary.
+
+    If `seed` is given, each game N is seeded with derive_game_seed(seed, N)
+    so deals (and agent stochasticity) are reproducible across runs and
+    aligned across opponents: game N has the same starting hand regardless
+    of which agents play it.
 
     Returns
     -------
@@ -137,10 +153,16 @@ def simulate_tournament(
     name_p0 = get_agent_name(agent_p0)
     name_p1 = get_agent_name(agent_p1)
 
-    print(f"\nSTARTING TOURNAMENT: {num_games} games | {name_p0} (P0) vs {name_p1} (P1)")
+    seed_note = f" | seed={seed}" if seed is not None else ""
+    print(
+        f"\nSTARTING TOURNAMENT: {num_games} games | "
+        f"{name_p0} (P0) vs {name_p1} (P1){seed_note}"
+    )
     start_time = time.time()
 
-    for _ in range(num_games):
+    for game_idx in range(num_games):
+        if seed is not None:
+            seed_all(env, derive_game_seed(seed, game_idx))
         state_vector, info = env.reset()
         terminated = False
         truncated = False
@@ -180,26 +202,58 @@ def simulate_tournament(
     return wins_p0, wins_p1
 
 
-def main() -> None:
-    base_env = TrucoEnv()
-    env = TrucoVectorObservation(base_env)
+AGENT_FACTORIES: Dict[str, Callable[[TrucoEnv, int], Any]] = {
+    "random": lambda _base, _seat: RandomAgent(),
+    "heuristic": lambda _base, _seat: HeuristicAgent(),
+    "always_fold": lambda _base, _seat: AlwaysFoldAgent(),
+    "always_raise": lambda _base, _seat: AlwaysRaiseAgent(),
+    "deterministic": lambda _base, _seat: DeterministicAgent(),
+    "hmm": lambda _base, seat: HMMAgent(perspective=seat),
+    "hmm_cfr": lambda _base, seat: HMMCFRAgent(perspective=seat),
+    "cfr": lambda _base, _seat: _build_cfr(),
+    "reinforce": lambda _base, _seat: _build_reinforce(),
+    "mcts": lambda base, seat: MCTSAgent(
+        env=base, n_simulations=500, n_determinizations=10,
+        perspective_player=seat,
+    ),
+}
 
-    cfr = CFRAgent()
-    cfr.load("models/cfr_v9_scorehand_6M.json.gz")
 
+def _build_cfr() -> CFRAgent:
+    agent = CFRAgent()
+    agent.load("models/cfr_v9_scorehand_6M.json.gz")
+    return agent
+
+
+def _build_reinforce() -> ReinforceAgent:
+    agent = ReinforceAgent()
+    agent.load("models/reinforce.pth")
+    return agent
+
+
+def build_agent(name: str, base_env: TrucoEnv, seat: int) -> Any:
+    """Resolve an agent name (case-insensitive) to a fresh instance."""
+    key = name.lower()
+    if key not in AGENT_FACTORIES:
+        raise ValueError(
+            f"Unknown agent '{name}'. Valid: {sorted(AGENT_FACTORIES)}"
+        )
+    return AGENT_FACTORIES[key](base_env, seat)
+
+
+def run_default_benchmark(env: TrucoVectorObservation, seed: Optional[int]) -> None:
+    """Run the full hardcoded benchmark suite (P0/P1 agent pairings)."""
+    base_env = env.raw_env
+
+    cfr = _build_cfr()
     random_agent = RandomAgent()
     heuristic = HeuristicAgent()
-
     mcts = MCTSAgent(
-        env=base_env,
-        n_simulations=500,
-        n_determinizations=10,
+        env=base_env, n_simulations=500, n_determinizations=10,
         perspective_player=1,
     )
-
-    reinforce = ReinforceAgent()
-    reinforce.load("models/reinforce.pth")
-
+    _ = mcts  # kept for parity with prior main(); benchmarks below don't use it
+    reinforce = _build_reinforce()
     hmm_p0 = HMMAgent(perspective=0)
     hmm_cfr_p0 = HMMCFRAgent(perspective=0)
     always_fold = AlwaysFoldAgent()
@@ -207,38 +261,90 @@ def main() -> None:
     deterministic = DeterministicAgent()
 
     print("\n=== Archetype Baselines ===\n")
-    simulate_tournament(env, heuristic, always_fold, num_games=1000)
-    simulate_tournament(env, heuristic, always_raise, num_games=1000)
-    simulate_tournament(env, cfr, always_fold, num_games=1000)
-    simulate_tournament(env, cfr, always_raise, num_games=1000)
-    simulate_tournament(env, hmm_p0, always_fold, num_games=1000)
-    simulate_tournament(env, hmm_p0, always_raise, num_games=1000)
-    simulate_tournament(env, hmm_cfr_p0, always_fold, num_games=1000)
-    simulate_tournament(env, hmm_cfr_p0, always_raise, num_games=1000)
+    simulate_tournament(env, heuristic, always_fold, num_games=1000, seed=seed)
+    simulate_tournament(env, heuristic, always_raise, num_games=1000, seed=seed)
+    simulate_tournament(env, cfr, always_fold, num_games=1000, seed=seed)
+    simulate_tournament(env, cfr, always_raise, num_games=1000, seed=seed)
+    simulate_tournament(env, hmm_p0, always_fold, num_games=1000, seed=seed)
+    simulate_tournament(env, hmm_p0, always_raise, num_games=1000, seed=seed)
+    simulate_tournament(env, hmm_cfr_p0, always_fold, num_games=1000, seed=seed)
+    simulate_tournament(env, hmm_cfr_p0, always_raise, num_games=1000, seed=seed)
 
     print("\n=== Full Benchmark ===\n")
-    simulate_tournament(env, hmm_p0, random_agent, num_games=5000)
-    simulate_tournament(env, hmm_p0, heuristic, num_games=5000)
-    simulate_tournament(env, cfr, random_agent, num_games=5000)
-    simulate_tournament(env, cfr, heuristic, num_games=5000)
-    simulate_tournament(env, hmm_cfr_p0, random_agent, num_games=5000)
-    simulate_tournament(env, hmm_cfr_p0, heuristic, num_games=5000)
+    simulate_tournament(env, hmm_p0, random_agent, num_games=5000, seed=seed)
+    simulate_tournament(env, hmm_p0, heuristic, num_games=5000, seed=seed)
+    simulate_tournament(env, cfr, random_agent, num_games=5000, seed=seed)
+    simulate_tournament(env, cfr, heuristic, num_games=5000, seed=seed)
+    simulate_tournament(env, hmm_cfr_p0, random_agent, num_games=5000, seed=seed)
+    simulate_tournament(env, hmm_cfr_p0, heuristic, num_games=5000, seed=seed)
 
     print("\n=== Deterministic Strategist (Filevich, 2023) Third-Party Baseline ===\n")
-    simulate_tournament(env, random_agent, deterministic, num_games=5000)
-    simulate_tournament(env, heuristic, deterministic, num_games=5000)
-    simulate_tournament(env, reinforce, deterministic, num_games=5000)
-    simulate_tournament(env, cfr, deterministic, num_games=5000)
-    simulate_tournament(env, hmm_p0, deterministic, num_games=5000)
-    simulate_tournament(env, hmm_cfr_p0, deterministic, num_games=5000)
-    # simulate_tournament(env, hmm_p0, reinforce, num_games=1000)
-    # simulate_tournament(env, hmm_p0, cfr, num_games=1000)
-    # simulate_tournament(env, hmm_cfr_p0, cfr, num_games=1000)
-    # simulate_tournament(env, hmm_cfr_p0, mcts, num_games=500)
-    # simulate_tournament(env, heuristic, mcts, num_games=100)
-    # simulate_tournament(env, reinforce, mcts, num_games=100)
-    # simulate_tournament(env, reinforce, heuristic, num_games=1000)
-    # simulate_tournament(env, reinforce, random_agent, num_games=1000)
+    simulate_tournament(env, random_agent, deterministic, num_games=5000, seed=seed)
+    simulate_tournament(env, heuristic, deterministic, num_games=5000, seed=seed)
+    simulate_tournament(env, reinforce, deterministic, num_games=5000, seed=seed)
+    simulate_tournament(env, cfr, deterministic, num_games=5000, seed=seed)
+    simulate_tournament(env, hmm_p0, deterministic, num_games=5000, seed=seed)
+    simulate_tournament(env, hmm_cfr_p0, deterministic, num_games=5000, seed=seed)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Truco Paulista match/tournament driver.",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Master seed. Each game N uses derive_game_seed(seed, N), so the "
+        "same N has the same deal across runs/opponents.",
+    )
+    parser.add_argument(
+        "--p0", type=str, default=None,
+        help="P0 agent name. If given (with --p1), runs a single matchup "
+        "instead of the default benchmark suite.",
+    )
+    parser.add_argument(
+        "--p1", type=str, default=None,
+        help="P1 agent name.",
+    )
+    parser.add_argument(
+        "--games", type=int, default=1000,
+        help="Number of games when running a single --p0/--p1 matchup "
+        "(default: 1000).",
+    )
+    parser.add_argument(
+        "--replay", type=int, default=None, metavar="GAME_INDEX",
+        help="Verbosely replay a single seeded game by index. Requires "
+        "--seed, --p0, --p1.",
+    )
+    args = parser.parse_args()
+
+    base_env = TrucoEnv()
+    env = TrucoVectorObservation(base_env)
+
+    if args.replay is not None:
+        if args.seed is None or args.p0 is None or args.p1 is None:
+            parser.error("--replay requires --seed, --p0, and --p1.")
+        agent_p0 = build_agent(args.p0, base_env, 0)
+        agent_p1 = build_agent(args.p1, base_env, 1)
+        game_seed = derive_game_seed(args.seed, args.replay)
+        print(
+            f"Replaying game #{args.replay} | master_seed={args.seed} "
+            f"| game_seed={game_seed}"
+        )
+        play_verbose_match(env, agent_p0, agent_p1, seed=game_seed)
+        return
+
+    if args.p0 is not None and args.p1 is not None:
+        agent_p0 = build_agent(args.p0, base_env, 0)
+        agent_p1 = build_agent(args.p1, base_env, 1)
+        simulate_tournament(
+            env, agent_p0, agent_p1, num_games=args.games, seed=args.seed,
+        )
+        return
+
+    if args.p0 is not None or args.p1 is not None:
+        parser.error("--p0 and --p1 must be given together.")
+
+    run_default_benchmark(env, args.seed)
 
 
 if __name__ == "__main__":

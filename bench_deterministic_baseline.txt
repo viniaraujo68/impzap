@@ -1,0 +1,21 @@
+Third-party baseline benchmark — DeterministicAgent (P1)
+Reference: Filevich (2023), MSc thesis, Universidad de la Republica, Sec. 4.11.2.
+Specification: faithful port of Algorithms 7, 9 and 10 (pages 75-78) to
+Truco Paulista. See agents/deterministic_agent.py docstring for the mapping.
+
+5000 games per matchup. P0 = candidate agent, P1 = DeterministicAgent.
+
+Agent           Wins    Win-rate
+--------------- ------  --------
+Random          673     13.5 %
+Heuristic       3315    66.3 %
+REINFORCE       4002    80.0 %
+CFR (v9, 6M)    3656    73.1 %
+HMM             3592    71.8 %
+HMM+CFR         3606    72.1 %
+
+Calibration sanity check (1000 games, single direction):
+  Deterministic vs Random: 854 wins (85.4 %).
+Filevich (2023, Table 4.4) reports 84.0 % for the same matchup in the
+2-player configuration with abstraction A1, confirming the port is
+within sampling noise of the published reference.

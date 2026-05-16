@@ -5,7 +5,6 @@ import "C"
 
 import (
 	"encoding/json"
-	"math/rand"
 	"unsafe"
 )
 
@@ -122,7 +121,7 @@ func NewDeck() Deck {
 }
 
 func (d Deck) Shuffle() Deck {
-	rand.Shuffle(len(d), func(i, j int) { d[i], d[j] = d[j], d[i] })
+	gameRng().Shuffle(len(d), func(i, j int) { d[i], d[j] = d[j], d[i] })
 	return d
 }
 
@@ -228,6 +227,11 @@ func FreeString(str *C.char) { C.free(unsafe.Pointer(str)) }
 
 //export StepFromState
 func StepFromState(stateJSON *C.char, actionID C.int) *C.char {
+	// Route any shuffles triggered by mid-search hand transitions through
+	// rolloutRng, leaving the live engineRng deal stream untouched.
+	useRolloutRng = true
+	defer func() { useRolloutRng = false }()
+
 	var s GameState
 	if err := json.Unmarshal([]byte(C.GoString(stateJSON)), &s); err != nil {
 		return C.CString(`{"error":"invalid state JSON"}`)
