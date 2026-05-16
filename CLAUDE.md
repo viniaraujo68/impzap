@@ -29,6 +29,7 @@ The Go engine (`engine/`) exposes CGO exports to Python:
   - `mcts_agent.py`: PIMC-MCTS agent.
   - `hmm_agent.py`: HMM opponent-modeling agent — infers behavioral state (Aggressive/Passive/Bluffing), exploits detected tendencies.
   - `heuristic_agent.py`, `random_agent.py`, `reinforce_agent.py`: Baseline agents.
+  - `deterministic_agent.py`: Third-party academic baseline — faithful Truco-Paulista port of Filevich (2023) MSc thesis, Sec. 4.11.2 "Agente Determinista", Algorithms 7, 9 and 10. Never raises; Truco-response threshold scales with bet (1/2/3 strong cards for bets 3/6/9-12); card play follows the three-branch status-dependent rule (play low when winning the hand, play high if it beats opp / low if not when losing or tied, play high when leading at round start). Calibrated against Filevich Table 4.4 (84.0% vs Random; this port reaches ~85.4%). External validation opponent, distinct from the internal HeuristicAgent.
 - `truco_env/env.py`: `TrucoEnv` — thin ctypes wrapper around the Go shared library.
 - `truco_env/wrappers.py`: `TrucoVectorObservation` — converts raw state dicts to fixed-size numpy vectors.
 - `models/`: Saved model files — `.pth` (PyTorch/REINFORCE), `.json.gz` (gzip JSON/CFR). Gitignored due to size.

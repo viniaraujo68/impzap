@@ -12,6 +12,7 @@ from agents.hmm_agent import HMMAgent
 from agents.hmm_cfr_agent import HMMCFRAgent
 from agents.always_fold_agent import AlwaysFoldAgent
 from agents.always_raise_agent import AlwaysRaiseAgent
+from agents.deterministic_agent import DeterministicAgent
 
 
 def translate_action(action: int, raw_state: Dict[str, Any]) -> str:
@@ -203,6 +204,7 @@ def main() -> None:
     hmm_cfr_p0 = HMMCFRAgent(perspective=0)
     always_fold = AlwaysFoldAgent()
     always_raise = AlwaysRaiseAgent()
+    deterministic = DeterministicAgent()
 
     print("\n=== Archetype Baselines ===\n")
     simulate_tournament(env, heuristic, always_fold, num_games=1000)
@@ -221,6 +223,14 @@ def main() -> None:
     simulate_tournament(env, cfr, heuristic, num_games=5000)
     simulate_tournament(env, hmm_cfr_p0, random_agent, num_games=5000)
     simulate_tournament(env, hmm_cfr_p0, heuristic, num_games=5000)
+
+    print("\n=== Deterministic Strategist (Filevich, 2023) Third-Party Baseline ===\n")
+    simulate_tournament(env, random_agent, deterministic, num_games=5000)
+    simulate_tournament(env, heuristic, deterministic, num_games=5000)
+    simulate_tournament(env, reinforce, deterministic, num_games=5000)
+    simulate_tournament(env, cfr, deterministic, num_games=5000)
+    simulate_tournament(env, hmm_p0, deterministic, num_games=5000)
+    simulate_tournament(env, hmm_cfr_p0, deterministic, num_games=5000)
     # simulate_tournament(env, hmm_p0, reinforce, num_games=1000)
     # simulate_tournament(env, hmm_p0, cfr, num_games=1000)
     # simulate_tournament(env, hmm_cfr_p0, cfr, num_games=1000)
