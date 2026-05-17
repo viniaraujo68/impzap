@@ -1,0 +1,30 @@
+Re-running HMM+CFR tournaments with v8 default backing
+Output: bench_per_game_hmmcfr_v8.csv
+Seed: 42 | 11 tournaments
+
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[1/11] final_vs_heur: hmm_cfr vs heuristic (2526/5000 = 50.52%) 11.9s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[2/11] final_vs_rand: hmm_cfr vs random (4326/5000 = 86.52%) 9.0s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[3/11] arch_vs_fold: hmm_cfr vs always_fold (980/1000 = 98.00%) 2.6s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[4/11] arch_vs_raise: hmm_cfr vs always_raise (714/1000 = 71.40%) 1.3s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[5/11] deterministic: hmm_cfr vs deterministic (3635/5000 = 72.70%) 15.5s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[6/11] h2h: heuristic vs hmm_cfr (2426/5000 = 48.52%) 12.1s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[7/11] h2h: hmm_cfr vs heuristic (2526/5000 = 50.52%) 11.7s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[8/11] h2h: reinforce vs hmm_cfr (2020/5000 = 40.40%) 80.1s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[9/11] h2h: hmm_cfr vs reinforce (2307/5000 = 46.14%) 70.1s
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[10/11] h2h: cfr vs hmm_cfr (2623/5000 = 52.46%) 17.9s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[11/11] h2h: hmm_cfr vs cfr (2240/5000 = 44.80%) 17.4s
+
+Total: 4.4 min

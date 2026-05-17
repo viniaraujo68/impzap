@@ -1,0 +1,95 @@
+Writing per-game results to bench_per_game.csv
+Master seed: 42
+Total tournaments: 33
+
+[1/33] final_vs_heur: hmm_cfr vs heuristic (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [final_vs_heur] hmm_cfr vs heuristic | 2489/5000 (49.8%) | 12.0s
+[2/33] final_vs_heur: hmm vs heuristic (5000 games)
+  [final_vs_heur] hmm vs heuristic | 2430/5000 (48.6%) | 11.1s
+[3/33] final_vs_heur: cfr vs heuristic (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [final_vs_heur] cfr vs heuristic | 2429/5000 (48.6%) | 14.3s
+[4/33] final_vs_rand: hmm_cfr vs random (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [final_vs_rand] hmm_cfr vs random | 4338/5000 (86.8%) | 9.0s
+[5/33] final_vs_rand: hmm vs random (5000 games)
+  [final_vs_rand] hmm vs random | 4403/5000 (88.1%) | 8.8s
+[6/33] final_vs_rand: cfr vs random (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [final_vs_rand] cfr vs random | 4406/5000 (88.1%) | 9.1s
+[7/33] final_vs_rand: heuristic vs random (5000 games)
+  [final_vs_rand] heuristic vs random | 4440/5000 (88.8%) | 6.7s
+[8/33] arch_vs_fold: hmm_cfr vs always_fold (1000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [arch_vs_fold] hmm_cfr vs always_fold | 980/1000 (98.0%) | 2.6s
+[9/33] arch_vs_fold: hmm vs always_fold (1000 games)
+  [arch_vs_fold] hmm vs always_fold | 962/1000 (96.2%) | 2.8s
+[10/33] arch_vs_fold: cfr vs always_fold (1000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [arch_vs_fold] cfr vs always_fold | 678/1000 (67.8%) | 4.3s
+[11/33] arch_vs_fold: heuristic vs always_fold (1000 games)
+  [arch_vs_fold] heuristic vs always_fold | 932/1000 (93.2%) | 2.4s
+[12/33] arch_vs_raise: hmm_cfr vs always_raise (1000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [arch_vs_raise] hmm_cfr vs always_raise | 706/1000 (70.6%) | 1.5s
+[13/33] arch_vs_raise: hmm vs always_raise (1000 games)
+  [arch_vs_raise] hmm vs always_raise | 685/1000 (68.5%) | 1.1s
+[14/33] arch_vs_raise: cfr vs always_raise (1000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [arch_vs_raise] cfr vs always_raise | 793/1000 (79.3%) | 1.4s
+[15/33] arch_vs_raise: heuristic vs always_raise (1000 games)
+  [arch_vs_raise] heuristic vs always_raise | 693/1000 (69.3%) | 0.8s
+[16/33] deterministic: random vs deterministic (5000 games)
+  [deterministic] random vs deterministic | 633/5000 (12.7%) | 12.3s
+[17/33] deterministic: heuristic vs deterministic (5000 games)
+  [deterministic] heuristic vs deterministic | 3363/5000 (67.3%) | 14.5s
+[18/33] deterministic: reinforce vs deterministic (5000 games)
+  [deterministic] reinforce vs deterministic | 3980/5000 (79.6%) | 136.0s
+[19/33] deterministic: cfr vs deterministic (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [deterministic] cfr vs deterministic | 3638/5000 (72.8%) | 21.4s
+[20/33] deterministic: hmm vs deterministic (5000 games)
+  [deterministic] hmm vs deterministic | 3514/5000 (70.3%) | 18.2s
+[21/33] deterministic: hmm_cfr vs deterministic (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [deterministic] hmm_cfr vs deterministic | 3635/5000 (72.7%) | 17.1s
+[22/33] h2h: heuristic vs reinforce (5000 games)
+  [h2h] heuristic vs reinforce | 1145/5000 (22.9%) | 70.5s
+[23/33] h2h: reinforce vs heuristic (5000 games)
+  [h2h] reinforce vs heuristic | 3847/5000 (76.9%) | 73.1s
+[24/33] h2h: heuristic vs cfr (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [h2h] heuristic vs cfr | 2477/5000 (49.5%) | 15.1s
+[25/33] h2h: cfr vs heuristic (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [h2h] cfr vs heuristic | 2429/5000 (48.6%) | 15.1s
+[26/33] h2h: heuristic vs hmm_cfr (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [h2h] heuristic vs hmm_cfr | 2389/5000 (47.8%) | 12.6s
+[27/33] h2h: hmm_cfr vs heuristic (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [h2h] hmm_cfr vs heuristic | 2489/5000 (49.8%) | 12.2s
+[28/33] h2h: reinforce vs cfr (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [h2h] reinforce vs cfr | 1256/5000 (25.1%) | 71.5s
+[29/33] h2h: cfr vs reinforce (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [h2h] cfr vs reinforce | 3731/5000 (74.6%) | 71.9s
+[30/33] h2h: reinforce vs hmm_cfr (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [h2h] reinforce vs hmm_cfr | 2309/5000 (46.2%) | 74.5s
+[31/33] h2h: hmm_cfr vs reinforce (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [h2h] hmm_cfr vs reinforce | 2639/5000 (52.8%) | 72.8s
+[32/33] h2h: cfr vs hmm_cfr (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [h2h] cfr vs hmm_cfr | 2623/5000 (52.5%) | 17.3s
+[33/33] h2h: hmm_cfr vs cfr (5000 games)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  [h2h] hmm_cfr vs cfr | 2238/5000 (44.8%) | 17.0s
+
+Total time: 15.1 min
+CSV written to: bench_per_game.csv

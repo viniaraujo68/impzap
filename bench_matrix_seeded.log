@@ -1,0 +1,72 @@
+
+=== Head-to-Head Matrix ===
+
+  Heuristic vs REINFORCE: 1139/5000 (22.8%) vs 3861 ties=0 | 119.0s
+  Heuristic vs MCTS: 527/1000 (52.7%) vs 473 ties=0 | 1388.5s
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  Heuristic vs CFR: 2535/5000 (50.7%) vs 2465 ties=0 | 23.0s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+  Heuristic vs HMM+CFR: 2461/5000 (49.2%) vs 2539 ties=0 | 14.9s
+  REINFORCE vs MCTS: 372/1000 (37.2%) vs 628 ties=0 | 635.4s
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  REINFORCE vs CFR: 1245/5000 (24.9%) vs 3755 ties=0 | 101.3s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+  REINFORCE vs HMM+CFR: 2023/5000 (40.5%) vs 2977 ties=0 | 84.1s
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  MCTS vs CFR: 427/1000 (42.7%) vs 573 ties=0 | 1612.0s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+  MCTS vs HMM+CFR: 518/1000 (51.8%) vs 482 ties=0 | 1321.2s
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  CFR vs HMM+CFR: 2701/5000 (54.0%) vs 2299 ties=0 | 26.9s
+
+=== Self-Play (P0 win rate against a fresh same-agent P1) ===
+
+  Heuristic vs Heuristic: 2550/5000 (51.0%) vs 2450 ties=0 | 9.3s
+  REINFORCE vs REINFORCE: 2496/5000 (49.9%) vs 2504 ties=0 | 116.0s
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+  CFR vs CFR: 2485/5000 (49.7%) vs 2515 ties=0 | 32.9s
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+  HMM+CFR vs HMM+CFR: 2545/5000 (50.9%) vs 2455 ties=0 | 18.2s
+
+Total benchmark time: 91.9 min
+
+### Markdown matrix (row vs column win rate)
+
+| | Heuristic | REINFORCE | MCTS | CFR | HMM+CFR |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **Heuristic** | 51.0% | 22.8% | 52.7% | 50.7% | 49.2% |
+| **REINFORCE** | 77.2% | 49.9% | 37.2% | 24.9% | 40.5% |
+| **MCTS** | 47.3% | 62.8% | — | 42.7% | 51.8% |
+| **CFR** | 49.3% | 75.1% | 57.3% | 49.7% | 54.0% |
+| **HMM+CFR** | 50.8% | 59.5% | 48.2% | 46.0% | 50.9% |
+
+### LaTeX tabular
+
+\begin{tabular}{lccccc}
+\toprule
+& Heuristic & REINFORCE & MCTS & CFR & HMM+CFR \\
+\midrule
+Heuristic & 51.0\% & 22.8\% & 52.7\% & 50.7\% & 49.2\% \\
+REINFORCE & 77.2\% & 49.9\% & 37.2\% & 24.9\% & 40.5\% \\
+MCTS & 47.3\% & 62.8\% & --- & 42.7\% & 51.8\% \\
+CFR & 49.3\% & 75.1\% & 57.3\% & 49.7\% & 54.0\% \\
+HMM+CFR & 50.8\% & 59.5\% & 48.2\% & 46.0\% & 50.9\% \\
+\bottomrule
+\end{tabular}
+
+Raw counts written to bench_matrix_results_seeded.txt

@@ -1,0 +1,171 @@
+[CFR] Loaded from models/cfr_v9_scorehand_6M.json.gz (423583 info sets, 6000000 iterations)
+[CFR] Loaded from models/cfr_v8_fullbucket_2M.json.gz (84587 info sets, 2000000 iterations)
+
+=== Archetype Baselines ===
+
+
+STARTING TOURNAMENT: 1000 games | HeuristicAgent (P0) vs AlwaysFold (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 4.65s
+P0 (HeuristicAgent): 932 wins (93.2%)
+P1 (AlwaysFold): 68 wins (6.8%)
+
+STARTING TOURNAMENT: 1000 games | HeuristicAgent (P0) vs AlwaysRaise (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 1.83s
+P0 (HeuristicAgent): 693 wins (69.3%)
+P1 (AlwaysRaise): 307 wins (30.7%)
+
+STARTING TOURNAMENT: 1000 games | CFR (P0) vs AlwaysFold (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 8.13s
+P0 (CFR): 678 wins (67.8%)
+P1 (AlwaysFold): 322 wins (32.2%)
+
+STARTING TOURNAMENT: 1000 games | CFR (P0) vs AlwaysRaise (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 2.88s
+P0 (CFR): 793 wins (79.3%)
+P1 (AlwaysRaise): 207 wins (20.7%)
+
+STARTING TOURNAMENT: 1000 games | HMM (P0) vs AlwaysFold (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 5.31s
+P0 (HMM): 962 wins (96.2%)
+P1 (AlwaysFold): 38 wins (3.8%)
+
+STARTING TOURNAMENT: 1000 games | HMM (P0) vs AlwaysRaise (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 2.13s
+P0 (HMM): 684 wins (68.4%)
+P1 (AlwaysRaise): 316 wins (31.6%)
+
+STARTING TOURNAMENT: 1000 games | HMM+CFR (P0) vs AlwaysFold (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 5.11s
+P0 (HMM+CFR): 980 wins (98.0%)
+P1 (AlwaysFold): 20 wins (2.0%)
+
+STARTING TOURNAMENT: 1000 games | HMM+CFR (P0) vs AlwaysRaise (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 2.94s
+P0 (HMM+CFR): 718 wins (71.8%)
+P1 (AlwaysRaise): 282 wins (28.2%)
+
+=== Full Benchmark ===
+
+
+STARTING TOURNAMENT: 5000 games | HMM (P0) vs RandomAgent (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 17.16s
+P0 (HMM): 4402 wins (88.0%)
+P1 (RandomAgent): 598 wins (12.0%)
+
+STARTING TOURNAMENT: 5000 games | HMM (P0) vs HeuristicAgent (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 21.83s
+P0 (HMM): 2430 wins (48.6%)
+P1 (HeuristicAgent): 2570 wins (51.4%)
+
+STARTING TOURNAMENT: 5000 games | CFR (P0) vs RandomAgent (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 18.66s
+P0 (CFR): 4406 wins (88.1%)
+P1 (RandomAgent): 594 wins (11.9%)
+
+STARTING TOURNAMENT: 5000 games | CFR (P0) vs HeuristicAgent (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 26.93s
+P0 (CFR): 2429 wins (48.6%)
+P1 (HeuristicAgent): 2571 wins (51.4%)
+
+STARTING TOURNAMENT: 5000 games | HMM+CFR (P0) vs RandomAgent (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 13.60s
+P0 (HMM+CFR): 4323 wins (86.5%)
+P1 (RandomAgent): 677 wins (13.5%)
+
+STARTING TOURNAMENT: 5000 games | HMM+CFR (P0) vs HeuristicAgent (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 16.90s
+P0 (HMM+CFR): 2519 wins (50.4%)
+P1 (HeuristicAgent): 2481 wins (49.6%)
+
+=== Deterministic Strategist (Filevich, 2023) Third-Party Baseline ===
+
+
+STARTING TOURNAMENT: 5000 games | RandomAgent (P0) vs Deterministic (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 14.79s
+P0 (RandomAgent): 633 wins (12.7%)
+P1 (Deterministic): 4367 wins (87.3%)
+
+STARTING TOURNAMENT: 5000 games | HeuristicAgent (P0) vs Deterministic (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 19.21s
+P0 (HeuristicAgent): 3363 wins (67.3%)
+P1 (Deterministic): 1637 wins (32.7%)
+
+STARTING TOURNAMENT: 5000 games | REINFORCE (P0) vs Deterministic (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 184.44s
+P0 (REINFORCE): 3980 wins (79.6%)
+P1 (Deterministic): 1020 wins (20.4%)
+
+STARTING TOURNAMENT: 5000 games | CFR (P0) vs Deterministic (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 26.39s
+P0 (CFR): 3638 wins (72.8%)
+P1 (Deterministic): 1362 wins (27.2%)
+
+STARTING TOURNAMENT: 5000 games | HMM (P0) vs Deterministic (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 23.61s
+P0 (HMM): 3528 wins (70.6%)
+P1 (Deterministic): 1472 wins (29.4%)
+
+STARTING TOURNAMENT: 5000 games | HMM+CFR (P0) vs Deterministic (P1) | seed=42
+==================================================
+TOURNAMENT RESULTS
+==================================================
+Time: 21.90s
+P0 (HMM+CFR): 3638 wins (72.8%)
+P1 (Deterministic): 1362 wins (27.2%)

@@ -169,6 +169,9 @@ def main() -> None:
     win_rate: List[List[float]] = [[0.0] * n for _ in range(n)]
     sample_size: List[List[int]] = [[0] * n for _ in range(n)]
 
+    self_play_rate: List[float] = [0.0] * n
+    self_play_sample: List[int] = [0] * n
+
     print("\n=== Head-to-Head Matrix ===\n")
     overall_start = time.time()
 
@@ -188,6 +191,24 @@ def main() -> None:
             sample_size[i][j] = num_games
             sample_size[j][i] = num_games
 
+    # ---- Self-play (diagonal) ----
+    # MCTS-vs-MCTS is skipped because it's prohibitively slow (~minutes/game).
+    print("\n=== Self-Play (P0 win rate against a fresh same-agent P1) ===\n")
+    for i, (label, factory) in enumerate(agents):
+        if label == "MCTS":
+            continue
+        num_games = GAMES_FAST
+        # head_to_head's seat-swap halves give a clean "P0 perspective" view
+        # since both sides are the same agent; rate_a is the average P0 win
+        # rate across both seatings.
+        a_wins, b_wins, _ = head_to_head(
+            env, factory, factory, num_games, label, label,
+            seed=args.seed,
+        )
+        rate = a_wins / num_games * 100
+        self_play_rate[i] = rate
+        self_play_sample[i] = num_games
+
     total_elapsed = time.time() - overall_start
     print(f"\nTotal benchmark time: {total_elapsed/60:.1f} min")
 
@@ -201,7 +222,9 @@ def main() -> None:
         cells = []
         for j in range(n):
             if i == j:
-                cells.append("—")
+                cells.append(
+                    f"{self_play_rate[i]:.1f}%" if self_play_sample[i] else "—"
+                )
             else:
                 cells.append(f"{win_rate[i][j]:.1f}%")
         print(f"| **{name_i}** | " + " | ".join(cells) + " |")
@@ -217,7 +240,9 @@ def main() -> None:
         cells = []
         for j in range(n):
             if i == j:
-                cells.append("---")
+                cells.append(
+                    f"{self_play_rate[i]:.1f}\\%" if self_play_sample[i] else "---"
+                )
             else:
                 cells.append(f"{win_rate[i][j]:.1f}\\%")
         print(name_i + " & " + " & ".join(cells) + r" \\")
@@ -225,21 +250,33 @@ def main() -> None:
     print(r"\end{tabular}")
 
     # ---- Raw counts (for reuse) ----
-    with open("bench_matrix_results.txt", "w") as f:
+    out_path = (
+        "bench_matrix_results_seeded.txt"
+        if args.seed is not None
+        else "bench_matrix_results.txt"
+    )
+    with open(out_path, "w") as f:
         f.write("# Head-to-head benchmark results\n")
         f.write(f"# Generated in {total_elapsed/60:.1f} minutes\n")
+        if args.seed is not None:
+            f.write(f"# Master seed: {args.seed}\n")
         f.write(f"# CFR model: {CFR_MODEL}\n")
         f.write(f"# REINFORCE model: {REINFORCE_MODEL}\n\n")
         f.write("agent_a, agent_b, num_games, a_win_rate_pct\n")
         for i in range(n):
             for j in range(n):
                 if i == j:
+                    if self_play_sample[i]:
+                        f.write(
+                            f"{agents[i][0]}, {agents[i][0]}, "
+                            f"{self_play_sample[i]}, {self_play_rate[i]:.2f}\n"
+                        )
                     continue
                 f.write(
                     f"{agents[i][0]}, {agents[j][0]}, {sample_size[i][j]}, "
                     f"{win_rate[i][j]:.2f}\n"
                 )
-    print("\nRaw counts written to bench_matrix_results.txt")
+    print(f"\nRaw counts written to {out_path}")
 
 
 if __name__ == "__main__":
